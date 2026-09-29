@@ -6,7 +6,9 @@ from collections.abc import AsyncIterator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai_service.react_agent import get_react_streamer, run_react
 from app.ai_service.runner import run_agent, should_use_agent
+from app.ai_service.sse_slot import acquire_sse_slot, release_sse_slot
 from app.config import Settings
 from app.core.failed_response import BusinessError, ErrorCode
 from app.models.chat import ChatMessage, ChatSession
@@ -35,7 +37,12 @@ from app.rag.rag_route import RouteDecision, decide_retrieval
 from app.rag.rag_summarize import summarize_hits
 from app.rag.session_title import DEFAULT_TITLE, generate_session_title
 from app.rag.vector_store import get_vector_store
-from app.schemas.chat import ChatAskRequest, ChatMessageResponse, ChatSessionResponse
+from app.schemas.chat import (
+    ChatAskRequest,
+    ChatMessageResponse,
+    ChatSessionResponse,
+    QueryRequest,
+)
 from app.services import usage_service
 
 logger = logging.getLogger(__name__)
@@ -622,3 +629,223 @@ async def stream_ask(
             usage_service.clear_trace_context()
             await db.rollback()
             raise
+
+
+def _sse_data(payload: dict) -> str:
+    import json
+
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+async def stream_query(
+    session_factory,
+    user_id: str,
+    data: QueryRequest,
+    settings: Settings,
+) -> AsyncIterator[str]:
+    """ReAct 流式对话：thinking / response / tool_* / done / error。
+
+    事件体是 data-only JSON（带 type 字段），和原项目 /chat/query 对齐。
+    出错只推 error，不落助手消息、不发 done。
+    """
+    raw_message = data.message.strip()
+    question = visible_question(raw_message)
+    agent_question = referenced_notes_prompt(raw_message) or question
+    acquired = await acquire_sse_slot(user_id, settings)
+    if not acquired:
+        yield _sse_data(
+            {
+                "type": "error",
+                "content": f"并发连接数已达上限（最多 {settings.sse_max_connections_per_user} 个），请关闭多余标签页后重试",
+            }
+        )
+        return
+
+    try:
+        async with session_factory() as db:
+            try:
+                if data.session_id:
+                    session = await get_session(db, user_id, data.session_id)
+                else:
+                    session = await create_session(db, user_id, DEFAULT_TITLE, settings)
+
+                usage_service.set_trace_context(
+                    user_id=user_id, session_id=session.id, stage="chat"
+                )
+                rows = await _session_messages(db, session.id, settings)
+                summary = await _summary_text(db, session.id, settings)
+                history_block = _history_block(rows, settings, rag_text=None)
+
+                hits, decision = await _retrieve_or_skip(
+                    question, user_id, data.top_k, settings, history_block, summary
+                )
+                context_hits = (
+                    await summarize_hits(question, hits, settings)
+                    if decision.retrieve
+                    else []
+                )
+                rag_text = rag_context_text(context_hits) if decision.retrieve else ""
+                history_block = _history_block(rows, settings, rag_text=rag_text)
+
+                user_msg = await _add_message(
+                    db, session.id, "user", raw_message, settings
+                )
+                await db.commit()
+                await db.refresh(session)
+                await db.refresh(user_msg)
+                yield _sse_data(
+                    {
+                        "type": "meta",
+                        "session_id": session.id,
+                        "user_message": _message_dump(user_msg),
+                    }
+                )
+
+                if rag_text:
+                    yield _sse_data(
+                        {
+                            "type": "thinking",
+                            "stage": "rag",
+                            "content": f"已从知识库检索到 {len(hits)} 个相关文档",
+                        }
+                    )
+                yield _sse_data(
+                    {
+                        "type": "thinking",
+                        "stage": "processing",
+                        "content": "正在思考...",
+                    }
+                )
+
+                use_react = get_react_streamer() is not None or bool(
+                    settings.llm_api_key
+                )
+                accumulated: list[str] = []
+                tool_calls: list[dict] = []
+                errored = False
+                used_agent = False
+
+                if use_react:
+                    used_agent = True
+                    async for event in run_react(
+                        agent_question,
+                        user_id,
+                        session_factory,
+                        settings,
+                        history=history_block,
+                        summary=summary,
+                        rag_context=rag_text,
+                        enable_thinking=data.enable_thinking,
+                    ):
+                        kind = event.get("type")
+                        if kind == "stream_done":
+                            if event.get("full_response"):
+                                accumulated = [event["full_response"]]
+                            continue
+                        if kind == "response":
+                            accumulated.append(event.get("content") or "")
+                        elif kind == "tool_end":
+                            tool_calls.append(
+                                {
+                                    "name": event.get("name"),
+                                    "status": "error" if event.get("error") else "ok",
+                                    "result": event.get("result")
+                                    or event.get("error")
+                                    or "",
+                                }
+                            )
+                        elif kind == "error":
+                            errored = True
+                        yield _sse_data(event)
+                        if errored:
+                            break
+                elif should_use_agent(question, settings):
+                    used_agent = True
+                    try:
+                        async for event in run_agent(
+                            agent_question,
+                            user_id,
+                            session_factory,
+                            settings,
+                            history_block,
+                        ):
+                            kind = event.get("type")
+                            if kind == "response":
+                                text = event.get("content") or ""
+                                if text:
+                                    accumulated.append(text)
+                                    yield _sse_data(
+                                        {"type": "response", "content": text}
+                                    )
+                            elif kind in ("tool_start", "tool_end"):
+                                if kind == "tool_end":
+                                    tool_calls.append(
+                                        {
+                                            "name": event.get("name"),
+                                            "status": "error"
+                                            if event.get("error")
+                                            else "ok",
+                                            "result": event.get("result")
+                                            or event.get("error")
+                                            or "",
+                                        }
+                                    )
+                                yield _sse_data(event)
+                    except Exception as exc:
+                        logger.warning("本地 Agent 失败，回退检索: %s", exc)
+                        used_agent = False
+                        accumulated = []
+
+                if not accumulated and not errored:
+                    fallback = compose_answer(
+                        question, context_hits, used_retrieval=decision.retrieve
+                    )
+                    async for token in _fallback_tokens(fallback):
+                        accumulated.append(token)
+                        yield _sse_data({"type": "response", "content": token})
+
+                if errored:
+                    usage_service.clear_trace_context()
+                    return
+
+                answer = "".join(accumulated)
+                assistant_msg = await _add_message(
+                    db, session.id, "assistant", answer, settings
+                )
+                session.updated_at = assistant_msg.created_at
+                await _maybe_auto_title(session, question, settings)
+                await db.flush()
+                await check_and_summarize(db, session.id, settings)
+                await db.commit()
+                if _cache_on(settings):
+                    await invalidate_session_list(user_id)
+                await db.refresh(session)
+                await db.refresh(assistant_msg)
+                usage_service.clear_trace_context()
+
+                done = {
+                    "type": "done",
+                    "session_id": session.id,
+                    "answer": answer,
+                    "used_retrieval": decision.retrieve,
+                    "used_agent": used_agent,
+                    "tool_calls": tool_calls,
+                    "title": session.title,
+                    "assistant_message": _message_dump(assistant_msg),
+                }
+                if hits:
+                    done["sources"] = [
+                        {
+                            "content": (item.get("content") or "")[:100],
+                            "source": item.get("source") or "",
+                        }
+                        for item in hits[:3]
+                    ]
+                yield _sse_data(done)
+            except Exception:
+                usage_service.clear_trace_context()
+                await db.rollback()
+                logger.exception("AI 对话流生成失败")
+                yield _sse_data({"type": "error", "content": "生成失败，请稍后重试"})
+    finally:
+        await release_sse_slot(user_id)

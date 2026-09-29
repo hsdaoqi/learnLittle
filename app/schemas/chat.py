@@ -11,6 +11,15 @@ class ChatAskRequest(BaseModel):
     top_k: int = Field(default=5, ge=1, le=10)
 
 
+class QueryRequest(BaseModel):
+    session_id: str | None = Field(default=None, description="为空则创建新会话")
+    message: str = Field(min_length=1, max_length=20000)
+    top_k: int = Field(default=5, ge=1, le=10)
+    enable_thinking: bool = Field(
+        default=False, description="深度思考；本阶段只把开关传给 ReAct 模型"
+    )
+
+
 class ChatSessionResponse(BaseModel):
     id: str
     title: str

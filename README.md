@@ -6,7 +6,7 @@
 
 原项目使用 MIT License。这里不直接复制实现，而是参照其功能和模块边界逐步重建。
 
-## 当前阶段：31 笔记 AI 辅助
+## 当前阶段：40 ReAct 流式对话
 
 已经完成：
 
@@ -200,6 +200,81 @@
 - 注入函数 > `LLM_API_KEY` > 空结果；失败不打断编辑
 - 测试可 `set_note_ai_fn` 注入，不打外网
 
+**艾宾浩斯回顾（32 阶段）**
+
+- `review_records`：一篇笔记一条记录；创建笔记时立刻可复习（`next_review_at = now`）
+- 间隔 1 / 2 / 4 / 7 / 15 / 30 天；打卡后进下一档，到 30 天停住。`quality` 0-5 只落库，留给以后 SM-2
+- `GET /review/today`、`POST /review/{id}/complete`、`GET /review/stats`（待复习 / 累计 / 今日完成 / 连续天数）
+- 已删笔记不进今日列表；跨用户 404（40409）
+- `app/ai_service/review_tools.py` 给后面 Agent 留 `get_today_reviews_tool` / `mark_reviewed_tool`，本阶段不接 LangChain
+- 前端「回顾」页：左侧待复习列表，右侧正文 + 1-5 掌握程度
+
+**Agent 工具（提前落地，对应表上 39）**
+
+- 不引入 LangChain / Plan-Execute / 邮件 / PPT。OpenAI 函数调用循环，最多 4 轮
+- 无密钥时按关键词走本地工具：今日待回顾、笔记统计、当前用户、现在几点
+- 工具：时间、用户信息、搜索/读/统计/相关笔记、创建/更新笔记、今日回顾、标记完成
+- 写操作自己开 session 并 commit；失败回退 RAG。`AGENT_ENABLED=false` 关闭
+- 测试可 `set_agent_runner` 注入。SSE 增加 `tool_start` / `tool_end`
+
+**邮箱（表上第 33 阶段）**
+
+- `POST /auth/send-code`：6 位验证码 Redis TTL 5 分钟；邮箱 60 秒冷却；同 IP 每小时 10 次
+- 注册仍可不填邮箱。带验证码则 `email_verified=true`；只填邮箱不填验证码则未验证
+- `POST /user/change-email` 改绑；`POST /note/{id}/export-email` 发 md/txt 附件
+- SMTP 用 aiosmtplib；测试 `set_send_email_fn`。未配置 503 / 40007。本阶段不做 PDF
+
+**资料与会话（表上第 34 阶段）**
+
+- `PUT /user/me` 只改简介；带 `email` 字段会被 schema 拒绝（40002），邮箱仍走验证码
+- `POST /user/me/password`：校验旧密码后改哈希，并吊销该用户全部 Refresh Token 与设备会话
+- `POST /file/avatar`：PNG / JPG / WebP，5MB，扩展名 + magic bytes；落到 `data/avatars/{user_id}/`，经 `/static/avatars` 访问
+- 登录可带 `device_id`：同一设备重复登录轮换旧 refresh；超过 5 台踢最旧
+- `GET /auth/sessions`、`DELETE /auth/sessions/{device_id}`；撤销当前设备同时拉黑 Access Token。跨用户不暴露 403，找不到就是 40405
+- 前端资料页：头像、简介、改密、设备列表。请求自动带 `X-Device-Id`
+
+**接口护栏（表上第 35 阶段）**
+
+- Redis 固定窗口：先全局限流 100 次/分钟/身份，再按路径最长前缀做接口限流
+- 登录/注册 5、发验证码 10、问答 10、知识库上传 20、笔记 60、其余默认 30
+- 已登录用 user_id，未登录用 `anon:{ip}`；`/health` `/ready` `/docs` `/static` 不限
+- 彻底删除笔记额外 30 次/分钟。测试默认 `RATE_LIMIT_ENABLED=false`，避免打爆登录锁定用例
+- 新增错误码 42902 全局限流。邮件验证码自己的 60 秒冷却仍然保留
+
+**Token 用量（表上第 36 阶段）**
+
+- `model_traces` 记每次模型调用：用户/会话/阶段/模型/token/延迟；`model_pricing` 启动时种子单价
+- 问答、HyDE、记忆压缩、检索摘要、Agent、笔记 AI 都会打点。没有官方 usage 时按字符估算（约 2 字 1 token）
+- 写入走独立 session，失败只打日志，不打断主流程。没有 user_id 不落库
+- `GET /usage/summary?days=&session_id=`：总量、按阶段、按模型费用。跨用户天然隔离
+- 前端资料页展示近 30 天调用次数 / Token / 估算费用
+
+**会话自动标题（表上第 37 阶段）**
+
+- 新会话先落「新对话」，首轮问答结束后用一次短补全生成不超过 20 字的标题
+- 失败、关闭开关或未配密钥：截断问句（默认 40 字）。不打断问答
+- 标题已不是「新对话」时不再覆盖，手动改名后也不会被自动标题改回去
+- 用量记 `stage=title`。测试可 `set_title_fn` 注入
+- SSE `done` 和同步 `/chat/ask` 都带 `title`，前端会话列表立刻更新
+
+**对话卡片（表上第 38 阶段）**
+
+- `search_notes_tool` 输出固定编号列表：`找到 N 篇与"关键词"相关的笔记：` + `N. 标题 (ID: xxx) - 摘要`
+- 无密钥时「搜索笔记 / 查找笔记」走本地工具，同样返回这套格式
+- 前端解析 AI 回复里的列表为可点击卡片；点开后按 ID 拉笔记详情，失败用消息里的摘要
+- 输入框可引用笔记：消息带 `【卡片】` 和 `<referenced_notes>`；展示层拆成问题 + 卡片，元数据块不直接显示
+- 检索和自动标题只用可见问题，整段引用正文不会冲掉标题
+
+**ReAct 流式对话（表上第 40 阶段）**
+
+- 首次接入 LangChain：`create_agent` + `astream_events(version="v2")`，DashScope 走 `langchain-openai` 兼容端点
+- `POST /chat/query` 是问答主入口。SSE 用 data-only JSON：`thinking` / `response` / `tool_start` / `tool_end` / `done` / `error`
+- 检索仍在图外并行：有命中先推 `thinking.stage=rag`，再跑 ReAct；出错只推 `error`，不落助手消息、不发 `done`
+- 无密钥时：关键词工具走本地 Agent，其余回退本地拼接。测试可 `set_react_streamer` 注入
+- 同一用户 SSE 连接上限默认 3；深度思考把整轮超时放宽一倍，并把 `enable_thinking` 传给模型
+- 本阶段不接查询分类器、Plan-Execute、Reflection、MCP
+- 前端浮层改走 `/chat/query`，可开关深度思考；旧 `/chat/stream` 仍保留
+
 ## 本地运行
 
 ```powershell
@@ -231,5 +306,5 @@ npm run dev                            # http://localhost:3000
 
 ## 下一阶段
 
-艾宾浩斯回顾（今日待复习 / 完成 / 统计；给后面 Agent 工具留接口）。
+查询分类器（表上第 41 阶段）：L1 规则 + L2 轻量 LLM；简单走 ReAct，复杂留给 Plan-Execute。Plan-Execute / Reflection 还不在这一阶段。
 

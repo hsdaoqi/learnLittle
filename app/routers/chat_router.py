@@ -1,7 +1,8 @@
 """聊天路由。
 
 - POST /chat/ask  同步问答（兼容；内部仍检索+拼/改写完整答案）
-- POST /chat/stream  SSE：meta / token / done
+- POST /chat/stream  SSE：meta / token / done（旧协议，兼容）
+- POST /chat/query  ReAct SSE：thinking / response / tool_* / done / error
 - 会话列表、改标题、删除、消息历史
 """
 
@@ -11,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.success_response import success_response
 from app.db.database import get_db_session
-from app.schemas.chat import ChatAskRequest, ChatSessionTitleUpdate
+from app.schemas.chat import ChatAskRequest, ChatSessionTitleUpdate, QueryRequest
 from app.services import chat_service
 from app.utils.auth_utils import get_current_user_id
 
@@ -49,6 +50,26 @@ async def stream_ask(
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.post("/chat/query", summary="ReAct 流式对话")
+async def chat_query(
+    request: Request,
+    data: QueryRequest,
+    user_id: str = Depends(get_current_user_id),
+):
+    settings = request.app.state.settings
+    return StreamingResponse(
+        chat_service.stream_query(
+            request.app.state.db_session_factory, user_id, data, settings
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

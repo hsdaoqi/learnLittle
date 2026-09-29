@@ -126,6 +126,10 @@ class Settings(BaseSettings):
 
     # Agent：问答里可调笔记/回顾工具。无密钥时用关键词走本地工具
     agent_enabled: bool = True
+    # ReAct 整轮超时（秒）。深度思考时按 2 倍放宽
+    llm_stream_timeout: int = 60
+    # 同一用户同时打开的 /chat/query SSE 连接上限
+    sse_max_connections_per_user: int = 3
 
     # 会话自动标题：首轮生成一次；失败回退截断问句；手动改名后不再覆盖
     chat_auto_title_enabled: bool = True
