@@ -1,0 +1,72 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root,
+[data-theme='light'] {
+  --color-bg: #f5f6f8;
+  --color-surface: #ffffff;
+  --color-text: #1f2937;
+  --color-text-secondary: #4b5563;
+  --color-text-tertiary: #9ca3af;
+  --color-border: #e5e7eb;
+  --color-accent: #4f46e5;
+  --color-accent-bg: #eef2ff;
+  --color-on-accent: #ffffff;
+  --color-danger: #dc2626;
+  --color-sidebar-bg: #ffffff;
+  --color-topbar-bg: #ffffff;
+  --color-topbar-border: #e5e7eb;
+  --color-search-bg: #f3f4f6;
+  --color-search-border: #e5e7eb;
+  --color-assistant-bg: #ffffff;
+  --color-assistant-border: #e5e7eb;
+  --color-assistant-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+}
+
+[data-theme='dark'] {
+  --color-bg: #111827;
+  --color-surface: #1f2937;
+  --color-text: #f3f4f6;
+  --color-text-secondary: #d1d5db;
+  --color-text-tertiary: #9ca3af;
+  --color-border: #374151;
+  --color-accent: #818cf8;
+  --color-accent-bg: #312e81;
+  --color-on-accent: #111827;
+  --color-danger: #f87171;
+  --color-sidebar-bg: #1f2937;
+  --color-topbar-bg: #1f2937;
+  --color-topbar-border: #374151;
+  --color-search-bg: #111827;
+  --color-search-border: #374151;
+  --color-assistant-bg: #1f2937;
+  --color-assistant-border: #374151;
+  --color-assistant-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+body {
+  @apply antialiased;
+}
+
+.markdown-body h1 { @apply mb-3 text-2xl font-bold; }
+.markdown-body h2 { @apply mb-2 mt-6 text-xl font-semibold; }
+.markdown-body h3 { @apply mb-2 mt-4 text-lg font-semibold; }
+.markdown-body p { @apply mb-3; }
+.markdown-body ul { @apply mb-3 list-disc pl-5; }
+.markdown-body ol { @apply mb-3 list-decimal pl-5; }
+.markdown-body code { @apply rounded bg-gray-200 px-1 py-0.5 font-mono text-[0.85em]; }
+.markdown-body pre { @apply mb-3 overflow-x-auto rounded-md bg-gray-900 p-3 text-gray-100; }
+.markdown-body pre code { @apply bg-transparent p-0 text-inherit; }
+.markdown-body blockquote { @apply mb-3 border-l-4 border-gray-300 pl-3 text-gray-600; }
+.markdown-body a { @apply text-indigo-600 underline; }
+.markdown-body table { @apply mb-3 w-full border-collapse text-left; }
+.markdown-body th, .markdown-body td { @apply border border-gray-200 px-2 py-1; }
