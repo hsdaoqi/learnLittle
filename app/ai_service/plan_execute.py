@@ -1,6 +1,7 @@
 """Plan-and-Execute：生成计划 → 逐步执行工具 → 综合成最终回答。
 
-本阶段不接 Reflection。计划失败或综合失败推 plan_fallback，由调用方改走 ReAct。
+计划失败或综合失败推 plan_fallback，由调用方改走 ReAct。
+步骤工具失败可按 Reflection L2 再试一轮；综合后的 L1 自检在 chat_service 收尾。
 测试可 set_plan_streamer / set_plan_fn 注入，不打外网。
 """
 
@@ -240,7 +241,13 @@ async def generate_plan(message: str, settings: Settings) -> ExecutionPlan:
     previous = (usage_service.get_trace_context() or {}).get("stage") or "chat"
     usage_service.set_trace_stage("plan")
     try:
-        raw = await complete_openai_compatible(build_plan_prompt(message), settings)
+        from app.ai_service.thinking import complete_thinking_for
+
+        raw = await complete_openai_compatible(
+            build_plan_prompt(message),
+            settings,
+            enable_thinking=complete_thinking_for("plan", settings),
+        )
         return parse_plan_payload(raw, fallback_goal=visible_question(message)[:40])
     finally:
         usage_service.set_trace_stage(previous)
@@ -251,6 +258,7 @@ async def _execute_named_tool(
     question: str,
     bound: dict[str, Callable[..., Awaitable[str]]],
     previous: dict[int, str],
+    settings: Settings,
 ) -> AsyncIterator[dict[str, Any]]:
     fn = bound.get(step.tool)
     yield {"type": "tool_start", "name": step.tool}
@@ -273,15 +281,33 @@ async def _execute_named_tool(
     elif "title" in params and "content" in params:
         arguments["title"] = step.action[:40]
         arguments["content"] = context or question
-    try:
-        result = await _call_tool(fn, arguments)
-        yield {"type": "tool_end", "name": step.tool, "result": result}
-        step.result = _clip(result)
-    except Exception as exc:
-        logger.warning("计划步骤 %s 工具失败: %s", step.step, exc)
-        text = f"工具执行失败: {exc}"
-        yield {"type": "tool_end", "name": step.tool, "error": str(exc)}
-        step.result = text
+    from app.ai_service.reflection import build_repair_note, no_retry_tools
+
+    last_error = ""
+    for attempt in range(2):
+        try:
+            result = await _call_tool(fn, arguments)
+            yield {"type": "tool_end", "name": step.tool, "result": result}
+            step.result = _clip(result)
+            return
+        except Exception as exc:
+            logger.warning("计划步骤 %s 工具失败: %s", step.step, exc)
+            last_error = str(exc)
+            yield {"type": "tool_end", "name": step.tool, "error": last_error}
+            retry = (
+                settings.reflection_l2_enabled
+                and attempt == 0
+                and step.tool not in no_retry_tools(settings)
+            )
+            if retry:
+                yield {"type": "reflection", "stage": "repairing", "round": 1}
+                arguments["query"] = (
+                    arguments.get("query") or question
+                ) + build_repair_note(step.tool, last_error)
+                continue
+            step.result = f"工具执行失败: {last_error}"
+            return
+    step.result = f"工具执行失败: {last_error}"
 
 
 async def _complete_step_text(prompt: str, settings: Settings) -> str:
@@ -291,7 +317,15 @@ async def _complete_step_text(prompt: str, settings: Settings) -> str:
     previous = (usage_service.get_trace_context() or {}).get("stage") or "chat"
     usage_service.set_trace_stage("plan_step")
     try:
-        return (await complete_openai_compatible(prompt, settings)).strip()
+        from app.ai_service.thinking import complete_thinking_for
+
+        return (
+            await complete_openai_compatible(
+                prompt,
+                settings,
+                enable_thinking=complete_thinking_for("plan", settings),
+            )
+        ).strip()
     finally:
         usage_service.set_trace_stage(previous)
 
@@ -305,6 +339,7 @@ async def run_plan_execute(
     history: str = "",
     summary: str = "",
     rag_context: str = "",
+    enable_thinking: bool = False,
 ) -> AsyncIterator[dict[str, Any]]:
     from app.ai_service.react_agent import build_react_system_prompt
     from app.rag.llm import complete_openai_compatible
@@ -335,7 +370,9 @@ async def run_plan_execute(
         for step in batch:
             yield {"type": "plan_step_start", "step": step.step, "action": step.action}
             if step.tool and step.tool != "none":
-                async for event in _execute_named_tool(step, visible, bound, previous):
+                async for event in _execute_named_tool(
+                    step, visible, bound, previous, settings
+                ):
                     yield event
             else:
                 dep_text = "\n".join(
@@ -377,13 +414,34 @@ async def run_plan_execute(
     usage_service.set_trace_stage("plan_synthesize")
     try:
         if settings.llm_api_key:
-            answer = (await complete_openai_compatible(prompt, settings)).strip()
+            answer = (
+                await complete_openai_compatible(
+                    prompt,
+                    settings,
+                    enable_thinking=enable_thinking,
+                )
+            ).strip()
         else:
             answer = "\n".join(
                 item.result for item in plan.steps if item.result
             ).strip()
         if not answer:
             raise ValueError("综合结果为空")
+        from app.ai_service.reflection import maybe_l1_refine
+
+        step_blob = "\n".join(
+            f"步骤 {item.step}：{item.result}" for item in plan.steps if item.result
+        )
+        answer, reflection_events = await maybe_l1_refine(
+            visible,
+            answer,
+            settings,
+            plan_summary=plan.goal,
+            step_results=step_blob,
+            enable_thinking=enable_thinking,
+        )
+        for event in reflection_events:
+            yield event
         yield {"type": "response", "content": answer}
         yield {"type": "plan_complete", "goal": plan.goal}
         yield {"type": "stream_done", "full_response": answer}
@@ -403,6 +461,7 @@ async def run_plan(
     history: str = "",
     summary: str = "",
     rag_context: str = "",
+    enable_thinking: bool = False,
 ) -> AsyncIterator[dict[str, Any]]:
     if _injected_streamer is not None:
         async for event in _injected_streamer(
@@ -413,6 +472,7 @@ async def run_plan(
             history=history,
             summary=summary,
             rag_context=rag_context,
+            enable_thinking=enable_thinking,
         ):
             yield event
         return
@@ -424,5 +484,6 @@ async def run_plan(
         history=history,
         summary=summary,
         rag_context=rag_context,
+        enable_thinking=enable_thinking,
     ):
         yield event

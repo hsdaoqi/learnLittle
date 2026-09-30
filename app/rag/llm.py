@@ -108,12 +108,15 @@ async def stream_openai_compatible(
         "stream": True,
         "stream_options": {"include_usage": True},
         "messages": [{"role": "user", "content": prompt}],
+        "enable_thinking": False,
     }
     parts: list[str] = []
     usage_payload: dict | None = None
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            async with client.stream("POST", url, headers=headers, json=payload) as resp:
+            async with client.stream(
+                "POST", url, headers=headers, json=payload
+            ) as resp:
                 if resp.status_code >= 400:
                     body = (await resp.aread()).decode("utf-8", errors="replace")[:300]
                     raise RuntimeError(f"LLM HTTP {resp.status_code}: {body}")
@@ -136,12 +139,23 @@ async def stream_openai_compatible(
                         yield text
         await timer.finish(prompt, "".join(parts), usage_payload)
     except Exception as exc:
-        await timer.finish(prompt, "".join(parts), usage_payload, success=False, error=str(exc))
+        await timer.finish(
+            prompt, "".join(parts), usage_payload, success=False, error=str(exc)
+        )
         raise
 
 
-async def complete_openai_compatible(prompt: str, settings: Settings) -> str:
-    """非流式 chat/completions，给 HyDE 这种短补全用。"""
+async def complete_openai_compatible(
+    prompt: str,
+    settings: Settings,
+    *,
+    enable_thinking: bool = False,
+    timeout: float = 30.0,
+) -> str:
+    """非流式 chat/completions，给 HyDE / 分类 / 计划这种短补全用。
+
+    enable_thinking 默认关。分类器和计划不要跟前端深度思考走同一套开关。
+    """
     import httpx
 
     from app.services.usage_service import UsageTimer, get_trace_context
@@ -157,15 +171,16 @@ async def complete_openai_compatible(prompt: str, settings: Settings) -> str:
         "model": settings.llm_model,
         "stream": False,
         "messages": [{"role": "user", "content": prompt}],
+        "enable_thinking": bool(enable_thinking),
     }
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(url, headers=headers, json=payload)
         if resp.status_code >= 400:
             body = resp.text[:300]
             raise RuntimeError(f"LLM HTTP {resp.status_code}: {body}")
         data = resp.json()
-        message = ((data.get("choices") or [{}])[0].get("message") or {})
+        message = (data.get("choices") or [{}])[0].get("message") or {}
         text = (message.get("content") or "").strip()
         await timer.finish(prompt, text, data)
         return text

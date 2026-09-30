@@ -110,6 +110,10 @@ export default function ChatPanel() {
             setActiveId(meta.session_id)
           },
           onThinking: (event) => {
+            if (event.stage === 'attachment') {
+              setThinkingText(t('assistant.thinkingAttachment'))
+              return
+            }
             setThinkingText(event.content)
           },
           onPlan: (event) => {
@@ -123,6 +127,10 @@ export default function ChatPanel() {
               setThinkingText(t('assistant.planSynth'))
             } else if (event.type === 'plan_fallback') {
               setThinkingText(t('assistant.planFallback'))
+            } else if (event.type === 'reflection') {
+              if (event.stage === 'checking') setThinkingText(t('assistant.reflectCheck'))
+              else if (event.stage === 'refining') setThinkingText(t('assistant.reflectFix'))
+              else if (event.stage === 'repairing') setThinkingText(t('assistant.reflectRepair'))
             }
           },
           onToolStart: (event) => {
@@ -288,7 +296,10 @@ export default function ChatPanel() {
           >
             {t('chat.refNote')}
           </button>
-          <label className="flex shrink-0 items-center gap-1 text-xs text-[var(--color-text-secondary)]">
+          <label
+            className="flex shrink-0 items-center gap-1 text-xs text-[var(--color-text-secondary)]"
+            title={t('assistant.thinkingHint')}
+          >
             <input
               type="checkbox"
               checked={enableThinking}

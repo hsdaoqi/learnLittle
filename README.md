@@ -6,7 +6,7 @@
 
 原项目使用 MIT License。这里不直接复制实现，而是参照其功能和模块边界逐步重建。
 
-## 当前阶段：40 ReAct 流式对话
+## 当前阶段：44 深度思考开关补强
 
 已经完成：
 
@@ -271,9 +271,40 @@
 - `POST /chat/query` 是问答主入口。SSE 用 data-only JSON：`thinking` / `response` / `tool_start` / `tool_end` / `done` / `error`
 - 检索仍在图外并行：有命中先推 `thinking.stage=rag`，再跑 ReAct；出错只推 `error`，不落助手消息、不发 `done`
 - 无密钥时：关键词工具走本地 Agent，其余回退本地拼接。测试可 `set_react_streamer` 注入
-- 同一用户 SSE 连接上限默认 3；深度思考把整轮超时放宽一倍，并把 `enable_thinking` 传给模型
-- 本阶段不接查询分类器、Plan-Execute、Reflection、MCP
+- 同一用户 SSE 连接上限默认 3；主问答深度思考把整轮超时放宽一倍
 - 前端浮层改走 `/chat/query`，可开关深度思考；旧 `/chat/stream` 仍保留
+
+**查询分类器（表上第 41 阶段）**
+
+- L1 规则：复杂模式 / 长文多问号 / 多工具并列 / 条件分支 → complex；问候、短闲聊、单步工具 → simple
+- 规则不确定且开了 L2、配了密钥：用短 JSON 补全精判；解析失败或调用失败一律 simple
+- `POST /chat/query` 在 ReAct 前推 `thinking.stage=classify`；`done` 带 `complexity` / `route` / `classifier_source`
+- complex 在 Plan 可用时 route=`plan_execute`，否则 `plan_pending` 并降级 ReAct
+- 测试可 `set_classifier_fn` 注入；`CLASSIFIER_ENABLED=false` 时全部当 simple
+
+**Plan-and-Execute（表上第 42 阶段）**
+
+- complex 查询：轻量补全生成 JSON 计划（goal + steps/tool/depends_on）→ 按依赖分批执行工具 → 综合成最终回答
+- SSE：`plan_start` / `plan_step_start` / `plan_step_end` / `plan_synthesize` / `plan_complete`；步骤中间结果不直接当最终答案
+- 计划生成失败或综合失败推 `plan_fallback`，同一轮改走 ReAct，不 500
+- 无密钥时：注入 `set_plan_streamer` / `set_plan_fn` 可测；否则 complex 仍降级 ReAct
+- 前端浮层用 thinking 区显示计划目标和当前步骤
+
+**Reflection（表上第 43 阶段）**
+
+- L1：综合/ReAct 成稿后，超过字数阈值才用短 JSON 评审；不合格再修一轮。超时、解析失败、issues 为空一律视为通过
+- L2：计划步骤工具失败时最多再试 1 次，并把失败原因回灌；`send_email` 等副作用工具不重试
+- SSE：`reflection` + `stage=checking|refining|repairing`；修正后的正文才作为最终 `response`
+- 没密钥且未注入时跳过 L1，不打断问答。测试可 `set_critique_fn` 注入
+- 本阶段不接 MCP / PPT / 多模态
+
+**深度思考开关补强（表上第 44 阶段）**
+
+- 前端「深度思考」只作用在主问答模型（ReAct / Plan 综合 / L1 修正稿）
+- 分类器、计划生成、批判模型各用环境变量，默认关闭，不跟前端开关绑在一起
+- `attachment_ids` 非空时主模型思考强制关闭，并推 `thinking.stage=attachment`；本阶段仍不解析图片/视频
+- `done` 带 `enable_thinking` / `thinking_requested` / `thinking_reason`
+- 测试可直接断言策略函数，也可走 `/chat/query` 注入 ReAct
 
 ## 本地运行
 
@@ -306,5 +337,5 @@ npm run dev                            # http://localhost:3000
 
 ## 下一阶段
 
-查询分类器（表上第 41 阶段）：L1 规则 + L2 轻量 LLM；简单走 ReAct，复杂留给 Plan-Execute。Plan-Execute / Reflection 还不在这一阶段。
+MCP / PPT / 多模态（表上后续阶段）：附件 ID 已能关掉深度思考，真正的视觉模型、PPT 工具和 MCP 还不在这一阶段。
 

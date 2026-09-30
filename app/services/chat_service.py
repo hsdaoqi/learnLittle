@@ -11,6 +11,7 @@ from app.ai_service.query_classifier import classify_query
 from app.ai_service.react_agent import get_react_streamer, run_react
 from app.ai_service.runner import run_agent, should_use_agent
 from app.ai_service.sse_slot import acquire_sse_slot, release_sse_slot
+from app.ai_service.thinking import resolve_agent_thinking
 from app.config import Settings
 from app.core.failed_response import BusinessError, ErrorCode
 from app.models.chat import ChatMessage, ChatSession
@@ -732,6 +733,14 @@ async def stream_query(
                     }
                 )
 
+                thinking = resolve_agent_thinking(
+                    data.enable_thinking,
+                    has_attachments=bool(data.attachment_ids),
+                )
+                notice = thinking.sse_notice()
+                if notice:
+                    yield _sse_data(notice)
+
                 use_react = get_react_streamer() is not None or bool(
                     settings.llm_api_key
                 )
@@ -753,7 +762,7 @@ async def stream_query(
                         history=history_block,
                         summary=summary,
                         rag_context=rag_text,
-                        enable_thinking=data.enable_thinking,
+                        enable_thinking=thinking.applied,
                     ):
                         kind = event.get("type")
                         if kind == "stream_done":
@@ -790,6 +799,7 @@ async def stream_query(
                         history=history_block,
                         summary=summary,
                         rag_context=rag_text,
+                        enable_thinking=thinking.applied,
                     ):
                         kind = event.get("type")
                         if kind == "plan_fallback":
@@ -914,6 +924,9 @@ async def stream_query(
                     "route": actual_route,
                     "classifier_source": classification.source,
                     "used_plan": used_plan,
+                    "enable_thinking": thinking.applied,
+                    "thinking_requested": thinking.requested,
+                    "thinking_reason": thinking.reason,
                     "tool_calls": tool_calls,
                     "title": session.title,
                     "assistant_message": _message_dump(assistant_msg),

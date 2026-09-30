@@ -1,7 +1,7 @@
 """LangChain ReAct：create_agent + astream_events。
 
-本阶段接 ReAct 流式对话。查询分类器在 chat_service 里先跑；Plan-Execute / Reflection 还不在这里。
-测试可 set_react_streamer 注入，不打外网。
+查询分类器在 chat_service 里先跑。深度思考只作用在主模型 extra_body；
+分类器 / 计划走各自的环境变量。测试可 set_react_streamer 注入，不打外网。
 """
 
 from __future__ import annotations
@@ -164,16 +164,16 @@ def map_langchain_event(
 def _create_chat_model(settings: Settings, *, enable_thinking: bool, timeout: int):
     from langchain_openai import ChatOpenAI
 
-    kwargs: dict[str, Any] = {
-        "model": settings.llm_model,
-        "api_key": settings.llm_api_key,
-        "base_url": settings.llm_base_url,
-        "streaming": True,
-        "timeout": timeout,
-    }
-    if enable_thinking:
-        kwargs["extra_body"] = {"enable_thinking": True}
-    return ChatOpenAI(**kwargs)
+    from app.ai_service.thinking import extra_body
+
+    return ChatOpenAI(
+        model=settings.llm_model,
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
+        streaming=True,
+        timeout=timeout,
+        extra_body=extra_body(enable_thinking),
+    )
 
 
 def _create_agent(model, tools, system_prompt: str):
@@ -212,11 +212,10 @@ async def run_langchain_react(
 ) -> AsyncIterator[dict[str, Any]]:
     from langchain_core.messages import HumanMessage
 
+    from app.ai_service.thinking import agent_timeout
     from app.services.usage_service import UsageTimer
 
-    timeout = timeout or settings.llm_stream_timeout
-    if enable_thinking:
-        timeout = timeout * 2
+    timeout = agent_timeout(settings, enable_thinking, timeout=timeout)
     system_prompt = build_react_system_prompt(question, rag_context=rag_context)
     tools = build_langchain_tools(user_id, session_factory)
     model = _create_chat_model(
@@ -258,7 +257,21 @@ async def run_langchain_react(
                         )
                         return
         await timer.finish(prompt_text, "".join(accumulated))
-        yield {"type": "stream_done", "full_response": "".join(accumulated)}
+        final = "".join(accumulated)
+        from app.ai_service.reflection import maybe_l1_refine
+        from app.rag.note_cards import visible_question as _visible
+
+        final, reflection_events = await maybe_l1_refine(
+            _visible(question) or question,
+            final,
+            settings,
+            enable_thinking=enable_thinking,
+        )
+        for event in reflection_events:
+            yield event
+        if reflection_events and final != "".join(accumulated):
+            yield {"type": "response", "content": final}
+        yield {"type": "stream_done", "full_response": final}
     except TimeoutError:
         logger.warning("ReAct 响应超时 (timeout=%ss)", timeout)
         await timer.finish(

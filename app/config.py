@@ -136,10 +136,21 @@ class Settings(BaseSettings):
     classifier_l2_enabled: bool = True
     classifier_complex_min_length: int = 200
     classifier_short_msg_length: int = 50
-
-    # Plan-Execute：complex 查询先规划再执行；失败降级 ReAct。本阶段不做 Reflection
+    # 分类器思考模式。默认关：qwen-flash 开思考会拖过 L2 超时
+    classifier_enable_thinking: bool = False
+    # Plan-Execute：complex 查询先规划再执行；失败降级 ReAct。
     plan_execute_enabled: bool = True
     plan_execute_max_steps: int = 5
+    # 计划生成思考模式。默认关：开思考容易耗尽规划预算
+    plan_enable_thinking: bool = False
+
+    # Reflection：L1 综合后自检；L2 工具失败最多再试一轮。解析失败视为通过
+    reflection_l1_enabled: bool = True
+    reflection_l2_enabled: bool = True
+    reflection_min_answer_chars: int = 80
+    reflection_no_retry_tools: str = "send_email"
+    # 批判模型思考模式。默认关；修正稿跟主模型思考开关
+    reflection_enable_thinking: bool = False
 
     # 会话自动标题：首轮生成一次；失败回退截断问句；手动改名后不再覆盖
     chat_auto_title_enabled: bool = True

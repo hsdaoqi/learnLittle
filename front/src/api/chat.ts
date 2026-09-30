@@ -18,7 +18,8 @@ function dispatchChatEvent(eventName: string, payload: Record<string, unknown>, 
     type === 'plan_step_end' ||
     type === 'plan_synthesize' ||
     type === 'plan_complete' ||
-    type === 'plan_fallback'
+    type === 'plan_fallback' ||
+    type === 'reflection'
   ) {
     handlers.onPlan?.({
       type,
@@ -26,6 +27,7 @@ function dispatchChatEvent(eventName: string, payload: Record<string, unknown>, 
       step: payload.step as number | undefined,
       action: payload.action as string | undefined,
       reason: payload.reason as string | undefined,
+      stage: payload.stage as string | undefined,
     })
   } else if (type === 'tool_start') handlers.onToolStart?.(payload as never)
   else if (type === 'tool_end') handlers.onToolEnd?.(payload as never)
@@ -72,13 +74,23 @@ export interface ChatStreamHandlers {
   onToolStart?: (data: { name: string }) => void
   onToolEnd?: (data: { name: string; result?: string; error?: string | null }) => void
   onThinking?: (data: { stage?: string; content: string }) => void
-  onPlan?: (data: { type: string; goal?: string; step?: number; action?: string; reason?: string }) => void
+  onPlan?: (data: {
+    type: string
+    goal?: string
+    step?: number
+    action?: string
+    reason?: string
+    stage?: string
+  }) => void
   onError?: (content: string) => void
   onDone?: (data: {
     session_id: string
     answer: string
     used_retrieval?: boolean
     used_agent?: boolean
+    enable_thinking?: boolean
+    thinking_requested?: boolean
+    thinking_reason?: string
     title?: string | null
     assistant_message?: ChatMessage
   }) => void

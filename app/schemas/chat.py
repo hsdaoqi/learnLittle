@@ -16,7 +16,13 @@ class QueryRequest(BaseModel):
     message: str = Field(min_length=1, max_length=20000)
     top_k: int = Field(default=5, ge=1, le=10)
     enable_thinking: bool = Field(
-        default=False, description="深度思考；本阶段只把开关传给 ReAct 模型"
+        default=False,
+        description="深度思考；只作用于主问答模型。分类器 / 计划由环境变量独立控制",
+    )
+    attachment_ids: list[str] = Field(
+        default_factory=list,
+        max_length=8,
+        description="附件 ID。本阶段不解析多模态，非空时自动关闭主模型深度思考",
     )
 
 
