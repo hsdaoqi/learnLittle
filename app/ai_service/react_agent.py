@@ -166,14 +166,17 @@ def _create_chat_model(settings: Settings, *, enable_thinking: bool, timeout: in
 
     from app.ai_service.thinking import extra_body
 
-    return ChatOpenAI(
-        model=settings.llm_model,
-        api_key=settings.llm_api_key,
-        base_url=settings.llm_base_url,
-        streaming=True,
-        timeout=timeout,
-        extra_body=extra_body(enable_thinking),
-    )
+    kwargs: dict[str, Any] = {
+        "model": settings.llm_model,
+        "api_key": settings.llm_api_key,
+        "base_url": settings.llm_base_url,
+        "streaming": True,
+        "timeout": timeout,
+    }
+    body = extra_body(enable_thinking, settings)
+    if body is not None:
+        kwargs["extra_body"] = body
+    return ChatOpenAI(**kwargs)
 
 
 def _create_agent(model, tools, system_prompt: str):

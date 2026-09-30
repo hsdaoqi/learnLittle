@@ -103,12 +103,14 @@ async def stream_openai_compatible(
         "Authorization": f"Bearer {settings.llm_api_key}",
         "Content-Type": "application/json",
     }
+    from app.ai_service.thinking import payload_thinking_fields
+
     payload = {
         "model": settings.llm_model,
         "stream": True,
         "stream_options": {"include_usage": True},
         "messages": [{"role": "user", "content": prompt}],
-        "enable_thinking": False,
+        **payload_thinking_fields(False, settings),
     }
     parts: list[str] = []
     usage_payload: dict | None = None
@@ -160,6 +162,8 @@ async def complete_openai_compatible(
 
     from app.services.usage_service import UsageTimer, get_trace_context
 
+    from app.ai_service.thinking import payload_thinking_fields
+
     ctx = get_trace_context() or {}
     timer = UsageTimer(ctx.get("stage") or "complete", settings.llm_model)
     url = settings.llm_base_url.rstrip("/") + "/chat/completions"
@@ -171,7 +175,7 @@ async def complete_openai_compatible(
         "model": settings.llm_model,
         "stream": False,
         "messages": [{"role": "user", "content": prompt}],
-        "enable_thinking": bool(enable_thinking),
+        **payload_thinking_fields(enable_thinking, settings),
     }
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:

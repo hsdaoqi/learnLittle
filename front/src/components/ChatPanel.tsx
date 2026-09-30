@@ -114,6 +114,10 @@ export default function ChatPanel() {
               setThinkingText(t('assistant.thinkingAttachment'))
               return
             }
+            if (event.stage === 'unsupported') {
+              setThinkingText(t('assistant.thinkingUnsupported'))
+              return
+            }
             setThinkingText(event.content)
           },
           onPlan: (event) => {

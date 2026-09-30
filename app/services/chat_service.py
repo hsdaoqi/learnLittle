@@ -736,6 +736,7 @@ async def stream_query(
                 thinking = resolve_agent_thinking(
                     data.enable_thinking,
                     has_attachments=bool(data.attachment_ids),
+                    settings=settings,
                 )
                 notice = thinking.sse_notice()
                 if notice:

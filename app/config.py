@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     llm_api_key: str = ""
     llm_model: str = "qwen-plus"
+    # enable_thinking 协议：auto 仅百炼域名带该字段；none 永不传（GPT 兼容网关）
+    llm_thinking_protocol: Literal["auto", "dashscope", "none"] = "auto"
 
     # Embedding：未配 key 时用哈希向量；embedding_api_key 为空则复用 llm_api_key
     embedding_base_url: str = ""

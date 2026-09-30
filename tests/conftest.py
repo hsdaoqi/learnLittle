@@ -21,6 +21,7 @@ from app.rag.memory import set_summary_fn
 from app.rag.rag_route import set_route_fn
 from app.rag.rag_summarize import set_summarize_fn
 from app.services.note_ai_service import set_note_ai_fn
+from app.ai_service.react_agent import set_react_streamer
 from app.rag.retriever import reset_cross_encoder, set_rerank_fn
 from app.rag.vector_store import VectorStoreService, close_vector_store, set_vector_store
 from main import create_app
@@ -83,6 +84,7 @@ def client(tmp_path):
         set_summary_fn(None)
         set_summarize_fn(None)
         set_note_ai_fn(None)
+        set_react_streamer(None)
         reset_embedding_cache()
         from app.services.usage_service import clear_trace_context, set_session_factory
 
