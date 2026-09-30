@@ -1,6 +1,6 @@
 """LangChain ReAct：create_agent + astream_events。
 
-本阶段只接 ReAct 流式对话。分类器、Plan-Execute、Reflection 还不在这里。
+本阶段接 ReAct 流式对话。查询分类器在 chat_service 里先跑；Plan-Execute / Reflection 还不在这里。
 测试可 set_react_streamer 注入，不打外网。
 """
 

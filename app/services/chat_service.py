@@ -6,6 +6,8 @@ from collections.abc import AsyncIterator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai_service.plan_execute import plan_available, run_plan
+from app.ai_service.query_classifier import classify_query
 from app.ai_service.react_agent import get_react_streamer, run_react
 from app.ai_service.runner import run_agent, should_use_agent
 from app.ai_service.sse_slot import acquire_sse_slot, release_sse_slot
@@ -693,11 +695,24 @@ async def stream_query(
                 await db.commit()
                 await db.refresh(session)
                 await db.refresh(user_msg)
+                can_plan = plan_available(settings)
+                classification = await classify_query(
+                    question, settings, plan_available=can_plan
+                )
                 yield _sse_data(
                     {
                         "type": "meta",
                         "session_id": session.id,
                         "user_message": _message_dump(user_msg),
+                        "complexity": classification.complexity,
+                        "route": classification.route,
+                    }
+                )
+                yield _sse_data(
+                    {
+                        "type": "thinking",
+                        "stage": "classify",
+                        "content": classification.thinking_text(),
                     }
                 )
 
@@ -724,8 +739,11 @@ async def stream_query(
                 tool_calls: list[dict] = []
                 errored = False
                 used_agent = False
+                used_plan = False
+                actual_route = classification.route
 
-                if use_react:
+                async def _consume_react() -> AsyncIterator[str]:
+                    nonlocal accumulated, tool_calls, errored, used_agent
                     used_agent = True
                     async for event in run_react(
                         agent_question,
@@ -759,6 +777,69 @@ async def stream_query(
                         yield _sse_data(event)
                         if errored:
                             break
+
+                if classification.route == "plan_execute" and can_plan:
+                    used_agent = True
+                    used_plan = True
+                    fallback_to_react = False
+                    async for event in run_plan(
+                        agent_question,
+                        user_id,
+                        session_factory,
+                        settings,
+                        history=history_block,
+                        summary=summary,
+                        rag_context=rag_text,
+                    ):
+                        kind = event.get("type")
+                        if kind == "plan_fallback":
+                            fallback_to_react = True
+                            actual_route = "react"
+                            used_plan = False
+                            yield _sse_data(event)
+                            yield _sse_data(
+                                {
+                                    "type": "thinking",
+                                    "stage": "plan_fallback",
+                                    "content": "计划失败，本轮改走 ReAct",
+                                }
+                            )
+                            break
+                        if kind == "stream_done":
+                            if event.get("full_response"):
+                                accumulated = [event["full_response"]]
+                            continue
+                        if kind == "response":
+                            accumulated.append(event.get("content") or "")
+                        elif kind == "tool_end":
+                            tool_calls.append(
+                                {
+                                    "name": event.get("name"),
+                                    "status": "error" if event.get("error") else "ok",
+                                    "result": event.get("result")
+                                    or event.get("error")
+                                    or "",
+                                }
+                            )
+                        elif kind == "error":
+                            errored = True
+                        yield _sse_data(event)
+                        if errored:
+                            break
+                    if fallback_to_react and use_react and not errored:
+                        accumulated = []
+                        async for chunk in _consume_react():
+                            yield chunk
+                    elif (
+                        fallback_to_react
+                        and not use_react
+                        and not accumulated
+                        and not errored
+                    ):
+                        used_agent = False
+                elif use_react:
+                    async for chunk in _consume_react():
+                        yield chunk
                 elif should_use_agent(question, settings):
                     used_agent = True
                     try:
@@ -829,6 +910,10 @@ async def stream_query(
                     "answer": answer,
                     "used_retrieval": decision.retrieve,
                     "used_agent": used_agent,
+                    "complexity": classification.complexity,
+                    "route": actual_route,
+                    "classifier_source": classification.source,
+                    "used_plan": used_plan,
                     "tool_calls": tool_calls,
                     "title": session.title,
                     "assistant_message": _message_dump(assistant_msg),

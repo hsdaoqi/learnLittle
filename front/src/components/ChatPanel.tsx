@@ -112,6 +112,19 @@ export default function ChatPanel() {
           onThinking: (event) => {
             setThinkingText(event.content)
           },
+          onPlan: (event) => {
+            if (event.type === 'plan_start') {
+              setThinkingText(t('assistant.planStart') + (event.goal || ''))
+            } else if (event.type === 'plan_step_start') {
+              setThinkingText(
+                t('assistant.planStep') + String(event.step ?? '') + '：' + (event.action || ''),
+              )
+            } else if (event.type === 'plan_synthesize') {
+              setThinkingText(t('assistant.planSynth'))
+            } else if (event.type === 'plan_fallback') {
+              setThinkingText(t('assistant.planFallback'))
+            }
+          },
           onToolStart: (event) => {
             setToolHint(t('assistant.toolRunning') + event.name)
           },

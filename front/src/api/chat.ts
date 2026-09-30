@@ -12,6 +12,21 @@ function dispatchChatEvent(eventName: string, payload: Record<string, unknown>, 
       stage: payload.stage as string | undefined,
       content: String(payload.content ?? ''),
     })
+  } else if (
+    type === 'plan_start' ||
+    type === 'plan_step_start' ||
+    type === 'plan_step_end' ||
+    type === 'plan_synthesize' ||
+    type === 'plan_complete' ||
+    type === 'plan_fallback'
+  ) {
+    handlers.onPlan?.({
+      type,
+      goal: payload.goal as string | undefined,
+      step: payload.step as number | undefined,
+      action: payload.action as string | undefined,
+      reason: payload.reason as string | undefined,
+    })
   } else if (type === 'tool_start') handlers.onToolStart?.(payload as never)
   else if (type === 'tool_end') handlers.onToolEnd?.(payload as never)
   else if (type === 'error') handlers.onError?.(String(payload.content ?? '生成失败，请稍后重试'))
@@ -57,6 +72,7 @@ export interface ChatStreamHandlers {
   onToolStart?: (data: { name: string }) => void
   onToolEnd?: (data: { name: string; result?: string; error?: string | null }) => void
   onThinking?: (data: { stage?: string; content: string }) => void
+  onPlan?: (data: { type: string; goal?: string; step?: number; action?: string; reason?: string }) => void
   onError?: (content: string) => void
   onDone?: (data: {
     session_id: string

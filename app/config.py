@@ -131,6 +131,16 @@ class Settings(BaseSettings):
     # 同一用户同时打开的 /chat/query SSE 连接上限
     sse_max_connections_per_user: int = 3
 
+    # 查询分类：L1 规则；不确定且开了 L2 才调轻量补全。失败一律 simple
+    classifier_enabled: bool = True
+    classifier_l2_enabled: bool = True
+    classifier_complex_min_length: int = 200
+    classifier_short_msg_length: int = 50
+
+    # Plan-Execute：complex 查询先规划再执行；失败降级 ReAct。本阶段不做 Reflection
+    plan_execute_enabled: bool = True
+    plan_execute_max_steps: int = 5
+
     # 会话自动标题：首轮生成一次；失败回退截断问句；手动改名后不再覆盖
     chat_auto_title_enabled: bool = True
     chat_auto_title_max_chars: int = 20
