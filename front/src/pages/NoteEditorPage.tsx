@@ -5,6 +5,7 @@ import { ApiError } from '../api/client'
 import TagInput from '../components/TagInput'
 import { useCategoryStore } from '../stores/useCategoryStore'
 import type { Category } from '../types/notes'
+import { ArrowLeft, Eye, EyeOff, Mail, Save, Trash2 } from 'lucide-react'
 
 const MarkdownPreview = lazy(() => import('../components/MarkdownPreview'))
 
@@ -15,7 +16,7 @@ function flatten(nodes: Category[], prefix = ''): { id: string; label: string }[
   ])
 }
 
-export default function NoteEditorPage() {
+export default function NoteEditorPage({ onSaved }: { onSaved?: () => void }) {
   const { noteId } = useParams()
   const navigate = useNavigate()
   const categories = useCategoryStore((s) => s.categories)
@@ -61,12 +62,13 @@ export default function NoteEditorPage() {
       })
       setSavedAt(new Date().toLocaleTimeString('zh-CN'))
       await fetchCategories()
+      onSaved?.()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : '保存失败')
     } finally {
       setSaving(false)
     }
-  }, [noteId, title, content, tags, categoryId, fetchCategories])
+  }, [noteId, title, content, tags, categoryId, fetchCategories, onSaved])
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -83,6 +85,7 @@ export default function NoteEditorPage() {
     if (!noteId || !window.confirm('移入回收站？')) return
     await notesApi.remove(noteId)
     await fetchCategories()
+    onSaved?.()
     navigate('/')
   }
 
@@ -122,10 +125,10 @@ export default function NoteEditorPage() {
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex flex-wrap items-center gap-3 border-b border-gray-200 bg-white px-4 py-3">
-        <Link to="/" className="text-sm text-gray-500 hover:text-gray-800">
-          ← 返回
+    <div className="note-editor flex h-full flex-col">
+      <div className="page-toolbar flex flex-wrap items-center gap-3 border-b border-gray-200 bg-white px-4 py-3">
+        <Link to="/" title="返回笔记列表" aria-label="返回笔记列表" className="icon-button">
+          <ArrowLeft size={18} />
         </Link>
         <input
           value={title}
@@ -151,17 +154,21 @@ export default function NoteEditorPage() {
         {format !== 'txt' && (
           <button
             onClick={() => setShowPreview((v) => !v)}
-            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50"
+            title={showPreview ? '隐藏预览' : '显示预览'}
+            aria-label={showPreview ? '隐藏预览' : '显示预览'}
+            className="icon-button"
           >
-            {showPreview ? '隐藏预览' : '显示预览'}
+            {showPreview ? <EyeOff size={17} /> : <Eye size={17} />}
           </button>
         )}
         <button
           onClick={() => void save()}
           disabled={saving}
-          className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
+          title={saving ? '保存中' : '保存'}
+          aria-label="保存"
+          className="icon-button is-active"
         >
-          {saving ? '保存中…' : '保存'}
+          <Save size={17} />
         </button>
         <button
           onClick={async () => {
@@ -173,19 +180,23 @@ export default function NoteEditorPage() {
               setError(err instanceof ApiError ? err.message : '发送失败')
             }
           }}
-          className="rounded-md border border-gray-300 px-3 py-1.5 text-sm"
+          title="发到邮箱"
+          aria-label="发到邮箱"
+          className="icon-button"
         >
-          发到邮箱
+          <Mail size={17} />
         </button>
         <button
           onClick={() => void handleDelete()}
-          className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-red-500 hover:bg-red-50"
+          title="删除笔记"
+          aria-label="删除笔记"
+          className="icon-button danger"
         >
-          删除
+          <Trash2 size={17} />
         </button>
       </div>
 
-      <div className="flex items-center gap-3 border-b border-gray-100 bg-white px-4 py-2">
+      <div className="editor-metadata flex flex-wrap items-center gap-3 border-b border-gray-100 bg-white px-4 py-2">
         <TagInput tags={tags} onChange={setTags} />
         <button
           disabled={aiBusy}
@@ -220,12 +231,13 @@ export default function NoteEditorPage() {
 
       {error && <p className="px-4 py-2 text-sm text-red-500">{error}</p>}
 
-      <div className={`min-h-0 flex-1 ${format !== 'txt' && showPreview ? 'grid grid-cols-2' : 'flex'}`}>
+      <div className={`editor-paper min-h-0 flex-1 ${format !== 'txt' && showPreview ? 'grid grid-cols-2' : 'flex'}`}>
         <textarea
           value={content}
           onChange={(e) => setContent(e.target.value)}
-          placeholder={format === 'txt' ? '纯文本笔记… Ctrl+S 保存' : '用 Markdown 写笔记… Ctrl+S 保存'}
-          className="h-full min-h-0 w-full resize-none border-r border-gray-200 bg-white p-6 font-mono text-sm outline-none"
+          aria-label="笔记正文"
+          placeholder="开始记录…"
+          className="h-full min-h-0 w-full resize-none border-r border-gray-200 bg-white p-6 font-mono text-sm leading-7 outline-none"
         />
         {format !== 'txt' && showPreview && (
           <div className="h-full overflow-y-auto bg-gray-50 p-6">

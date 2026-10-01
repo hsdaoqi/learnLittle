@@ -65,7 +65,7 @@ export default function DailyReviewPage() {
   }
 
   return (
-    <div className="flex h-full min-h-0">
+    <div className="review-page flex h-full min-h-0">
       <aside className="w-64 shrink-0 overflow-y-auto border-r border-[var(--color-border)] p-3">
         <h1 className="mb-1 text-sm font-semibold">{t('review.title')}</h1>
         <p className="mb-3 text-xs text-[var(--color-text-secondary)]">

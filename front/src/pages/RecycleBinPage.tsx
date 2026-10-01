@@ -4,6 +4,8 @@ import { categoryApi } from '../api/category'
 import { ApiError } from '../api/client'
 import { useCategoryStore } from '../stores/useCategoryStore'
 import type { DeletedCategory, NoteSummary } from '../types/notes'
+import { RotateCcw, Trash2 } from 'lucide-react'
+import SectionSidebar from '../components/layout/SectionSidebar'
 
 export default function RecycleBinPage() {
   const fetchCategories = useCategoryStore((s) => s.fetchCategories)
@@ -59,10 +61,14 @@ export default function RecycleBinPage() {
     (tab === 'notes' && notes.length === 0) || (tab === 'categories' && categories.length === 0)
 
   return (
-    <div className="p-6">
+    <div className="section-workspace">
+    <SectionSidebar title="回收站" items={notes.map((note) => ({ id: note.id, title: note.title || '未命名笔记', meta: typeof note.days_remaining === 'number' ? `剩余 ${note.days_remaining} 天` : undefined }))} onSelect={(id) => { setTab('notes'); requestAnimationFrame(() => document.getElementById(`deleted-${id}`)?.scrollIntoView({ block: 'center' })) }} />
+    <div className="recycle-page min-w-0 flex-1 overflow-y-auto p-6">
       <h1 className="mb-4 text-base font-semibold">回收站</h1>
-      <div className="mb-4 flex gap-2">
+      <div className="recycle-tabs mb-4 flex gap-2" role="tablist">
         <button
+          role="tab"
+          aria-selected={tab === 'notes'}
           className={`rounded-md px-3 py-1.5 text-sm ${
             tab === 'notes'
               ? 'bg-[var(--color-accent)] text-[var(--color-on-accent)]'
@@ -73,6 +79,8 @@ export default function RecycleBinPage() {
           笔记 {notes.length}
         </button>
         <button
+          role="tab"
+          aria-selected={tab === 'categories'}
           className={`rounded-md px-3 py-1.5 text-sm ${
             tab === 'categories'
               ? 'bg-[var(--color-accent)] text-[var(--color-on-accent)]'
@@ -84,13 +92,14 @@ export default function RecycleBinPage() {
         </button>
       </div>
       {error && <p className="mb-3 text-sm text-red-500">{error}</p>}
-      {empty && <p className="text-sm text-[var(--color-text-tertiary)]">这一栏是空的。</p>}
+      {empty && <div className="empty-state"><Trash2 size={40} strokeWidth={1.5} /><p>回收站为空</p></div>}
 
       {tab === 'notes' && (
         <ul className="space-y-2">
           {notes.map((note) => (
             <li
               key={note.id}
+              id={`deleted-${note.id}`}
               className="flex items-center justify-between rounded-xl bg-[var(--color-surface)] p-4 shadow-card"
             >
               <div>
@@ -102,16 +111,20 @@ export default function RecycleBinPage() {
               </div>
               <div className="flex gap-2">
                 <button
-                  className="rounded px-2 py-1 text-xs text-[var(--color-accent)]"
+                  className="icon-button"
+                  title="恢复笔记"
+                  aria-label="恢复笔记"
                   onClick={() => void restoreNote(note.id)}
                 >
-                  恢复
+                  <RotateCcw size={16} />
                 </button>
                 <button
-                  className="rounded px-2 py-1 text-xs text-red-500"
+                  className="icon-button danger"
+                  title="彻底删除笔记"
+                  aria-label="彻底删除笔记"
                   onClick={() => void wipeNote(note.id)}
                 >
-                  彻底删除
+                  <Trash2 size={16} />
                 </button>
               </div>
             </li>
@@ -135,22 +148,27 @@ export default function RecycleBinPage() {
               </div>
               <div className="flex gap-2">
                 <button
-                  className="rounded px-2 py-1 text-xs text-[var(--color-accent)]"
+                  className="icon-button"
+                  title="恢复分类"
+                  aria-label="恢复分类"
                   onClick={() => void restoreCategory(cat.id)}
                 >
-                  恢复
+                  <RotateCcw size={16} />
                 </button>
                 <button
-                  className="rounded px-2 py-1 text-xs text-red-500"
+                  className="icon-button danger"
+                  title="彻底删除分类"
+                  aria-label="彻底删除分类"
                   onClick={() => void wipeCategory(cat.id)}
                 >
-                  彻底删除
+                  <Trash2 size={16} />
                 </button>
               </div>
             </li>
           ))}
         </ul>
       )}
+    </div>
     </div>
   )
 }

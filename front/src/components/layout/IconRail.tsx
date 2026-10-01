@@ -1,21 +1,22 @@
-import { NavLink, useNavigate } from 'react-router-dom'
+import VisualIcon from '../VisualIcon'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { authApi } from '../../api/auth'
 import { useT } from '../../i18n'
 import { useAuthStore } from '../../stores/useAuthStore'
 import { useUiStore } from '../../stores/useUiStore'
 
 const items = [
-  { to: '/', key: 'nav.notes' as const, end: true, mark: '笔' },
-  { to: '/review', key: 'nav.review' as const, mark: '忆' },
-  { to: '/templates', key: 'nav.templates' as const, mark: '模' },
-  { to: '/knowledge', key: 'nav.knowledge' as const, mark: '库' },
-  { to: '/recycle-bin', key: 'nav.recycle' as const, mark: '收' },
-  { to: '/profile', key: 'nav.profile' as const, mark: '我' },
+  { to: '/', key: 'nav.notes' as const, end: true, mark: 'note' as const },
+  { to: '/review', key: 'nav.review' as const, mark: 'review' as const },
+  { to: '/knowledge', key: 'nav.knowledge' as const, mark: 'folder' as const },
+  { to: '/templates', key: 'nav.templates' as const, mark: 'template' as const },
+  { to: '/recycle-bin', key: 'nav.recycle' as const, mark: 'trash' as const },
 ]
 
 export default function IconRail() {
   const t = useT()
   const navigate = useNavigate()
+  const location = useLocation()
   const clear = useAuthStore((s) => s.clear)
   const assistantVisible = useUiStore((s) => s.assistantVisible)
   const toggleAssistant = useUiStore((s) => s.toggleAssistant)
@@ -31,27 +32,29 @@ export default function IconRail() {
   }
 
   return (
-    <nav className="relative z-[60] flex h-full w-14 shrink-0 flex-col items-center gap-2 border-r border-[var(--color-border)] bg-[var(--color-sidebar-bg)] py-3">
+    <nav className="icon-rail relative z-[60] flex h-full w-14 shrink-0 flex-col items-center gap-2 border-r border-[var(--color-border)] bg-[var(--color-sidebar-bg)] py-3">
       {items.map((item) => (
         <NavLink
           key={item.to}
           to={item.to}
           end={item.end}
           title={t(item.key)}
+          aria-label={t(item.key)}
           className={({ isActive }) =>
             `flex h-10 w-10 items-center justify-center rounded-lg text-xs ${
-              isActive
+              isActive || (item.to === '/' && location.pathname.startsWith('/notes/'))
                 ? 'bg-[var(--color-accent)] text-[var(--color-on-accent)]'
                 : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-accent-bg)]'
             }`
           }
         >
-          {item.mark}
+          <VisualIcon name={item.mark} />
         </NavLink>
       ))}
       <button
         type="button"
         title={t('nav.chat')}
+        aria-label={t('nav.chat')}
         onClick={toggleAssistant}
         className={`flex h-10 w-10 items-center justify-center rounded-lg text-xs ${
           assistantVisible
@@ -59,15 +62,16 @@ export default function IconRail() {
             : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-accent-bg)]'
         }`}
       >
-        问
+        <VisualIcon name="chat" />
       </button>
       <button
         type="button"
         title={t('nav.logout')}
+        aria-label={t('nav.logout')}
         onClick={() => void handleLogout()}
         className="mt-auto flex h-10 w-10 items-center justify-center rounded-lg text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-accent-bg)]"
       >
-        出
+        <VisualIcon name="logout" />
       </button>
     </nav>
   )

@@ -50,10 +50,10 @@ export default function NoteTemplatesPage() {
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="templates-page flex h-full flex-col">
       <div className="border-b border-gray-200 bg-white px-4 py-3">
         <h1 className="text-base font-semibold">笔记模板</h1>
-        <p className="mt-1 text-xs text-gray-400">保存常用骨架，套用后直接进入编辑器。</p>
+        <p className="mt-1 text-xs text-gray-400">{templates.length} 个模板</p>
       </div>
       <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-4 md:grid-cols-2">
         <div className="rounded-xl bg-white p-4 shadow-card">

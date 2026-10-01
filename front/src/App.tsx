@@ -3,7 +3,6 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import MainLayout from './layouts/MainLayout'
 import HomePage from './pages/HomePage'
 import LoginPage from './pages/LoginPage'
-import NoteEditorPage from './pages/NoteEditorPage'
 import NoteListPage from './pages/NoteListPage'
 import ChatPage from './pages/ChatPage'
 import KnowledgeBasePage from './pages/KnowledgeBasePage'
@@ -32,8 +31,10 @@ export default function App() {
           </RequireAuth>
         }
       >
-        <Route index element={<NoteListPage />} />
-        <Route path="notes/:noteId" element={<NoteEditorPage />} />
+        <Route element={<NoteListPage />}>
+          <Route index element={null} />
+          <Route path="notes/:noteId" element={null} />
+        </Route>
         <Route path="recycle-bin" element={<RecycleBinPage />} />
         <Route path="templates" element={<NoteTemplatesPage />} />
         <Route path="review" element={<DailyReviewPage />} />

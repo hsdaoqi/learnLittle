@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import { applyTheme, useUiStore } from './stores/useUiStore'
 import './index.css'
+import './presentation.css'
 
 function applyUi(state: { theme: 'light' | 'dark'; locale: 'zh' | 'en' }) {
   applyTheme(state.theme)

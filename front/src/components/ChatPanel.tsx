@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { BookOpen, Brain, History, MessageSquare, Plus, Send, Trash2, X } from 'lucide-react'
 import { chatApi } from '../api/chat'
 import { notesApi } from '../api/notes'
 import { ApiError } from '../api/client'
@@ -22,6 +23,12 @@ export default function ChatPanel() {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [noteOptions, setNoteOptions] = useState<NoteSummary[]>([])
   const [picked, setPicked] = useState<NoteSummary[]>([])
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const messagesEnd = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    messagesEnd.current?.scrollIntoView({ block: 'end', behavior: 'smooth' })
+  }, [messages, thinkingText, toolHint])
 
   async function loadSessions(selectId?: string | null) {
     const list = await chatApi.sessions()
@@ -190,15 +197,22 @@ export default function ChatPanel() {
   }
 
   return (
-    <div className="flex h-full min-h-0">
-      <aside className="w-44 shrink-0 overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-surface)]">
+    <div className="chat-panel flex h-full min-h-0 flex-col">
+      <div className="chat-view-toolbar">
+        <button className={historyOpen ? '' : 'is-active'} onClick={() => setHistoryOpen(false)}><MessageSquare size={14} />对话</button>
+        <button className={historyOpen ? 'is-active' : ''} onClick={() => setHistoryOpen((v) => !v)}><History size={14} />历史会话</button>
+        <button className="ml-auto" disabled={sending} onClick={() => { setActiveId(null); setMessages([]); setError(''); setHistoryOpen(false) }}><Plus size={14} />{t('assistant.new')}</button>
+      </div>
+      <aside hidden={!historyOpen} className="chat-history min-h-0 flex-1 overflow-y-auto bg-[var(--color-surface)]">
         <div className="flex items-center justify-between px-3 py-3">
           <span className="text-sm font-semibold">{t('assistant.sessions')}</span>
           <button
             className="text-xs text-[var(--color-accent)]"
+            disabled={sending}
             onClick={() => {
               setActiveId(null)
               setMessages([])
+              setHistoryOpen(false)
             }}
           >
             {t('assistant.new')}
@@ -212,43 +226,53 @@ export default function ChatPanel() {
                 activeId === s.id ? 'bg-[var(--color-accent-bg)]' : ''
               }`}
             >
-              <button className="min-w-0 flex-1 truncate text-left" onClick={() => void loadSessions(s.id)}>
+              <button disabled={sending} className="min-w-0 flex-1 truncate text-left" onClick={() => { void loadSessions(s.id).then(() => setHistoryOpen(false)).catch((err) => setError(err instanceof ApiError ? err.message : t('assistant.loadFailed'))) }}>
                 {s.title}
               </button>
               <button
-                className="ml-1 text-xs text-[var(--color-danger)]"
-                onClick={() => void removeSession(s.id)}
+                className="icon-button danger"
+                title="删除会话"
+                aria-label="删除会话"
+                disabled={sending}
+                onClick={() => void removeSession(s.id).catch((err) => setError(err instanceof ApiError ? err.message : t('assistant.loadFailed')))}
               >
-                {t('assistant.delete')}
+                <Trash2 size={14} />
               </button>
             </li>
           ))}
         </ul>
       </aside>
 
-      <section className="flex min-w-0 flex-1 flex-col">
+      <section className={`chat-conversation min-h-0 min-w-0 flex-1 flex-col ${historyOpen ? 'hidden' : 'flex'}`}>
         {error && <p className="px-4 pt-3 text-sm text-[var(--color-danger)]">{error}</p>}
         {(toolHint || thinkingText) && (
           <p className="px-4 pt-2 text-xs text-[var(--color-text-secondary)]">
             {toolHint || thinkingText}
           </p>
         )}
-        <div className="flex-1 space-y-3 overflow-y-auto p-4">
+        <div className="chat-messages min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
           {messages.length === 0 && (
-            <p className="text-sm text-[var(--color-text-tertiary)]">{t('assistant.empty')}</p>
+            <div className="assistant-welcome">
+              <img src="/avatars/xiaoyunyun.png" alt="小云云" />
+              <h3>{t('assistant.empty')}</h3>
+              <div className="assistant-prompts">
+                {['今天有哪些笔记需要回顾？', '统计我的笔记', '搜索笔记'].map((prompt) => <button key={prompt} onClick={() => setDraft(prompt)}>{prompt}</button>)}
+              </div>
+            </div>
           )}
           {messages.map((m) => (
             <div
               key={m.id}
-              className={`max-w-[90%] rounded-xl px-4 py-3 text-sm ${
+              className={`chat-bubble max-w-[90%] rounded-xl px-4 py-3 text-sm ${
                 m.role === 'user'
-                  ? 'ml-auto bg-[var(--color-accent)] text-[var(--color-on-accent)]'
-                  : 'bg-[var(--color-surface)] shadow-card'
+                  ? 'chat-bubble-user ml-auto'
+                  : 'chat-bubble-assistant'
               }`}
             >
               <MessageContent content={m.content} role={m.role} />
             </div>
           ))}
+          <div ref={messagesEnd} />
         </div>
         {picked.length > 0 && (
           <div className="flex flex-wrap gap-1 border-t border-[var(--color-border)] px-3 pt-2">
@@ -259,7 +283,7 @@ export default function ChatPanel() {
                 className="rounded-full bg-[var(--color-accent-bg)] px-2 py-0.5 text-xs"
                 onClick={() => togglePick(note)}
               >
-                {note.title} ×
+                <span className="max-w-48 truncate">{note.title}</span> <X size={12} />
               </button>
             ))}
           </div>
@@ -287,21 +311,22 @@ export default function ChatPanel() {
           </div>
         )}
         <form
-          className="flex gap-2 border-t border-[var(--color-border)] bg-[var(--color-surface)] p-3"
+          className="chat-composer"
           onSubmit={(e) => {
             e.preventDefault()
             void send()
           }}
         >
+          <div className="composer-tools">
           <button
             type="button"
             onClick={() => (pickerOpen ? setPickerOpen(false) : void openPicker())}
-            className="rounded-md border border-[var(--color-border)] px-2 py-2 text-xs"
+            className={`composer-tool ${pickerOpen ? 'is-active' : ''}`}
           >
-            {t('chat.refNote')}
+            <BookOpen size={14} />{t('chat.refNote')}
           </button>
           <label
-            className="flex shrink-0 items-center gap-1 text-xs text-[var(--color-text-secondary)]"
+            className={`composer-tool ${enableThinking ? 'is-active' : ''}`}
             title={t('assistant.thinkingHint')}
           >
             <input
@@ -309,9 +334,13 @@ export default function ChatPanel() {
               checked={enableThinking}
               onChange={(e) => setEnableThinking(e.target.checked)}
             />
+            <Brain size={14} />
             {t('assistant.thinkingMode')}
           </label>
+          </div>
+          <div className="composer-input-row">
           <input
+            aria-label={t('assistant.placeholder')}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             placeholder={t('assistant.placeholder')}
@@ -319,11 +348,14 @@ export default function ChatPanel() {
           />
           <button
             type="submit"
-            disabled={sending}
-            className="rounded-md bg-[var(--color-accent)] px-4 py-2 text-sm text-[var(--color-on-accent)] hover:opacity-90 disabled:opacity-50"
+            disabled={sending || (!draft.trim() && picked.length === 0)}
+            title={sending ? t('assistant.sending') : t('assistant.send')}
+            aria-label={t('assistant.send')}
+            className="send-button"
           >
-            {sending ? t('assistant.sending') : t('assistant.send')}
+            <Send size={18} className={sending ? 'animate-pulse' : ''} />
           </button>
+          </div>
         </form>
       </section>
     </div>

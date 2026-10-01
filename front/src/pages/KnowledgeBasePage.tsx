@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { knowledgeApi } from '../api/knowledge'
 import { ApiError } from '../api/client'
 import type { KnowledgeDocument, KnowledgeSearchHit } from '../types/knowledge'
+import { Search, UploadCloud, Trash2, FileText } from 'lucide-react'
+import SectionSidebar from '../components/layout/SectionSidebar'
 
 interface UploadProgress {
   id: string
@@ -127,11 +129,13 @@ export default function KnowledgeBasePage() {
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="section-workspace">
+    <SectionSidebar title="知识库" items={documents.map((doc) => ({ id: String(doc.id), title: doc.filename, meta: `${doc.chunk_count} 个切片` }))} onSelect={(id) => document.getElementById(`document-${id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })} />
+    <div className="knowledge-page flex h-full flex-col">
       <div className="border-b border-gray-200 bg-white px-4 py-3">
         <h1 className="text-base font-semibold">知识库</h1>
         <p className="mt-1 text-xs text-gray-400">
-          上传后会解析、切片并写入本地向量库。支持 PDF / Markdown / TXT，单文件 50MB。
+          {documents.length} 份文档
         </p>
       </div>
 
@@ -158,6 +162,7 @@ export default function KnowledgeBasePage() {
           }}
         >
           <input
+            aria-label="搜索知识库"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="在已上传文档里检索"
@@ -168,7 +173,7 @@ export default function KnowledgeBasePage() {
             disabled={searching}
             className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
           >
-            {searching ? '检索中…' : '检索'}
+            <Search size={16} aria-label={searching ? '检索中' : '检索'} />
           </button>
         </form>
 
@@ -189,6 +194,10 @@ export default function KnowledgeBasePage() {
         )}
 
         <div
+          role="button"
+          tabIndex={0}
+          aria-label="上传文档"
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inputRef.current?.click() } }}
           onDragOver={(e) => {
             e.preventDefault()
             setDragOver(true)
@@ -200,7 +209,7 @@ export default function KnowledgeBasePage() {
             void handleFiles(e.dataTransfer.files)
           }}
           onClick={() => inputRef.current?.click()}
-          className={`mb-6 cursor-pointer rounded-xl border-2 border-dashed p-8 text-center transition ${
+          className={`knowledge-upload mb-6 cursor-pointer rounded-xl border-2 border-dashed p-8 text-center transition ${
             dragOver
               ? 'border-indigo-500 bg-indigo-50'
               : 'border-gray-300 bg-white hover:border-indigo-400'
@@ -217,10 +226,11 @@ export default function KnowledgeBasePage() {
               e.target.value = ''
             }}
           />
+          <UploadCloud size={34} strokeWidth={1.5} />
           <p className="text-sm text-gray-600">
             {uploading ? '正在上传…' : '点击或拖拽文件到这里上传'}
           </p>
-          <p className="mt-1 text-xs text-gray-400">PDF / Markdown / TXT</p>
+          <p className="mt-1 text-xs text-gray-400">PDF / Markdown / TXT · 50 MB</p>
         </div>
 
         {uploads.length > 0 && (
@@ -265,15 +275,18 @@ export default function KnowledgeBasePage() {
 
         {loading && <p className="text-sm text-gray-400">加载中…</p>}
         {!loading && documents.length === 0 && (
-          <p className="text-sm text-gray-400">还没有文档，先上传一份作为 RAG 的原料。</p>
+          <p className="text-center text-sm text-gray-400">暂无文档</p>
         )}
+        <h2 className="mb-3 text-sm font-semibold">我的文档</h2>
         <ul className="space-y-2">
           {documents.map((doc) => (
             <li
               key={doc.id}
+              id={`document-${doc.id}`}
               className="flex items-center justify-between rounded-xl bg-white p-4 shadow-card"
             >
-              <div className="min-w-0">
+              <FileText size={20} className="mr-3 shrink-0 text-[var(--color-accent)]" />
+              <div className="min-w-0 flex-1">
                 <p className="truncate font-medium">{doc.filename}</p>
                 <p className="mt-1 text-xs text-gray-400">
                   {formatSize(doc.file_size)} · {doc.chunk_count} 个切片 · {doc.file_type}
@@ -282,15 +295,18 @@ export default function KnowledgeBasePage() {
                 </p>
               </div>
               <button
-                className="ml-3 shrink-0 rounded px-2 py-1 text-xs text-red-500 hover:bg-red-50"
+                className="icon-button danger ml-3"
+                title="删除文档"
+                aria-label="删除文档"
                 onClick={() => void handleDelete(doc.id)}
               >
-                删除
+                <Trash2 size={16} />
               </button>
             </li>
           ))}
         </ul>
       </div>
+    </div>
     </div>
   )
 }

@@ -1,6 +1,5 @@
 import { useEffect } from 'react'
-import { Outlet, useLocation } from 'react-router-dom'
-import CategoryTree from '../components/CategoryTree'
+import { Outlet } from 'react-router-dom'
 import AssistantDrawer from '../components/layout/AssistantDrawer'
 import GlobalSearchModal from '../components/layout/GlobalSearchModal'
 import IconRail from '../components/layout/IconRail'
@@ -8,11 +7,6 @@ import TopBar from '../components/layout/TopBar'
 import { useUiStore } from '../stores/useUiStore'
 
 export default function MainLayout() {
-  const location = useLocation()
-  const showCategoryTree =
-    !location.pathname.startsWith('/knowledge') &&
-    location.pathname !== '/profile' &&
-    location.pathname !== '/review'
   const assistantVisible = useUiStore((s) => s.assistantVisible)
   const searchOpen = useUiStore((s) => s.searchOpen)
 
@@ -40,8 +34,7 @@ export default function MainLayout() {
       <TopBar />
       <div className="flex min-h-0 flex-1">
         <IconRail />
-        {showCategoryTree && <CategoryTree />}
-        <main className="min-w-0 flex-1 bg-[var(--color-bg)]">
+        <main className="workspace-main min-w-0 flex-1 overflow-auto bg-[var(--color-bg)]">
           <Outlet />
         </main>
         <AssistantDrawer />

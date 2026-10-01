@@ -6,6 +6,7 @@ import { ApiError } from '../api/client'
 import { getDeviceId } from '../api/device'
 import { useT } from '../i18n'
 import { useAuthStore } from '../stores/useAuthStore'
+import { Activity, Camera, Check, ChevronDown, Info, LoaderCircle, LogOut, Mail, Monitor, Save, ShieldCheck, UserRound } from 'lucide-react'
 
 export default function HomePage() {
   const t = useT()
@@ -26,6 +27,8 @@ export default function HomePage() {
   const [sessions, setSessions] = useState<DeviceSession[]>([])
   const [usage, setUsage] = useState<UsageSummary | null>(null)
   const [uploading, setUploading] = useState(false)
+  const [editingEmail, setEditingEmail] = useState(false)
+  const [pending, setPending] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -78,41 +81,40 @@ export default function HomePage() {
   }
 
   return (
-    <div className="h-full overflow-auto p-6">
+    <div className="profile-page">
+      <div className="profile-content">
       <h1 className="mb-6 text-xl font-bold">{t('profile.title')}</h1>
 
-      {error && <div className="mb-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
-      {hint && <div className="mb-4 rounded-md bg-green-50 px-3 py-2 text-sm text-green-700">{hint}</div>}
+      {error && <div role="alert" className="profile-feedback is-error">{error}</div>}
+      {hint && <div role="status" className="profile-feedback is-success"><Check size={16} />{hint}</div>}
 
       {!user && !error && <div className="text-sm text-gray-500">加载中…</div>}
 
       {user && (
-        <div className="grid max-w-4xl gap-6 lg:grid-cols-2">
-          <section className="rounded-xl bg-[var(--color-surface)] p-6 shadow-card">
-            <div className="mb-4 flex items-center gap-4">
+        <>
+          <section className="profile-primary" aria-label={t('profile.title')}>
+            <div className="profile-identity">
               <button
                 type="button"
                 onClick={() => fileRef.current?.click()}
-                className="relative h-16 w-16 overflow-hidden rounded-full bg-[var(--color-accent-bg)] text-lg font-semibold text-[var(--color-accent)]"
+                disabled={uploading}
+                className="profile-avatar"
                 title={t('profile.uploadAvatar')}
+                aria-label={t('profile.uploadAvatar')}
               >
                 {user.avatar ? (
                   <img src={user.avatar} alt="" className="h-full w-full object-cover" />
                 ) : (
-                  user.username.slice(0, 1).toUpperCase()
+                  <UserRound size={32} strokeWidth={1.5} />
                 )}
+                <span className={`profile-avatar-overlay ${uploading ? 'is-uploading' : ''}`}>
+                  {uploading ? <LoaderCircle size={22} className="animate-spin" /> : <Camera size={22} />}
+                </span>
+                <span className="profile-avatar-camera"><Camera size={12} /></span>
               </button>
-              <div>
-                <p className="font-medium">{user.username}</p>
-                <p className="text-xs text-[var(--color-text-secondary)]">{t('profile.avatarHint')}</p>
-                <button
-                  type="button"
-                  className="mt-1 text-xs text-[var(--color-accent)]"
-                  onClick={() => fileRef.current?.click()}
-                  disabled={uploading}
-                >
-                  {t('profile.uploadAvatar')}
-                </button>
+              <div className="profile-identity-text">
+                <h2>{user.username}</h2>
+                <p>{t('profile.createdAt')} {new Date(user.created_at).toLocaleDateString()}</p>
               </div>
               <input
                 ref={fileRef}
@@ -139,122 +141,143 @@ export default function HomePage() {
               />
             </div>
 
-            <dl className="space-y-3 text-sm">
-              <div className="flex">
-                <dt className="w-24 shrink-0 text-[var(--color-text-secondary)]">{t('profile.username')}</dt>
-                <dd className="font-medium">{user.username}</dd>
+            <div className="profile-email">
+              <p className="profile-label">{t('profile.email')}</p>
+              <div className="profile-email-value">
+                <Mail size={15} />
+                <span className="profile-email-address">{user.email || t('profile.unbound')}</span>
+                {user.email && <span className={`profile-verification ${user.email_verified ? 'is-verified' : ''}`}>
+                  {user.email_verified ? <Check size={12} /> : null}
+                  {user.email_verified ? t('profile.verified') : t('profile.unverified')}
+                </span>}
+                <button
+                  type="button"
+                  className="profile-text-button"
+                  aria-expanded={editingEmail}
+                  aria-controls="profile-email-editor"
+                  onClick={() => setEditingEmail((value) => !value)}
+                >
+                  {editingEmail ? t('profile.cancel') : t('profile.bindEmail')}
+                </button>
               </div>
-              <div className="flex">
-                <dt className="w-24 shrink-0 text-[var(--color-text-secondary)]">{t('profile.email')}</dt>
-                <dd>
-                  {user.email ?? t('profile.unbound')}
-                  {user.email_verified ? t('profile.verified') : ''}
-                </dd>
-              </div>
-              <div className="flex">
-                <dt className="w-24 shrink-0 text-[var(--color-text-secondary)]">{t('profile.status')}</dt>
-                <dd>{user.status}</dd>
-              </div>
-              <div className="flex">
-                <dt className="w-24 shrink-0 text-[var(--color-text-secondary)]">{t('profile.userId')}</dt>
-                <dd className="break-all font-mono text-xs">{user.uuid}</dd>
-              </div>
-              <div className="flex">
-                <dt className="w-24 shrink-0 text-[var(--color-text-secondary)]">{t('profile.createdAt')}</dt>
-                <dd>{new Date(user.created_at).toLocaleString()}</dd>
-              </div>
-            </dl>
-
-            <div className="mt-4 space-y-2 border-t border-[var(--color-border)] pt-4">
-              <p className="text-sm font-medium">{t('profile.bio')}</p>
-              <textarea
-                value={bio}
-                onChange={(e) => setBio(e.target.value)}
-                maxLength={500}
-                rows={3}
-                placeholder={t('profile.bioPlaceholder')}
-                className="w-full rounded-md border px-3 py-1.5 text-sm"
-              />
-              <button
-                type="button"
-                className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm text-white"
-                onClick={async () => {
-                  setError('')
-                  setHint('')
-                  try {
-                    await authApi.updateMe({ bio })
-                    await reloadMe()
-                    setHint('简介已保存')
-                  } catch (err) {
-                    setError(err instanceof ApiError ? err.message : '保存失败')
-                  }
-                }}
-              >
-                {t('profile.saveBio')}
-              </button>
-            </div>
-
-            <div className="mt-4 space-y-2 border-t border-[var(--color-border)] pt-4">
-              <p className="text-sm font-medium">{t('profile.bindEmail')}</p>
+              {editingEmail && <div className="profile-email-editor" id="profile-email-editor">
+              <label className="sr-only" htmlFor="profile-new-email">{t('profile.newEmail')}</label>
+              <div className="profile-field-row">
               <input
+                id="profile-new-email"
                 type="email"
+                autoComplete="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder={t('profile.newEmail')}
-                className="w-full rounded-md border px-3 py-1.5 text-sm"
+                className="profile-field"
               />
-              <div className="flex gap-2">
-                <input
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  placeholder={t('profile.code')}
-                  maxLength={6}
-                  className="flex-1 rounded-md border px-3 py-1.5 text-sm"
-                />
                 <button
                   type="button"
-                  className="rounded-md border px-3 py-1.5 text-sm"
+                  className="primary-button"
+                  disabled={pending !== '' || !email.trim()}
                   onClick={async () => {
                     setError('')
                     setHint('')
+                    setPending('code')
                     try {
                       await authApi.sendCode(email)
                       setHint('验证码已发送')
                     } catch (err) {
                       setError(err instanceof ApiError ? err.message : '发送失败')
+                    } finally {
+                      setPending('')
                     }
                   }}
                 >
                   {t('profile.send')}
                 </button>
+              </div>
+              <label className="sr-only" htmlFor="profile-email-code">{t('profile.code')}</label>
+              <div className="profile-field-row">
+                <input
+                  id="profile-email-code"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  placeholder={t('profile.code')}
+                  maxLength={6}
+                  className="profile-field"
+                />
                 <button
                   type="button"
-                  className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm text-white"
+                  className="primary-button"
+                  disabled={pending !== '' || !email.trim() || code.length !== 6}
                   onClick={async () => {
                     setError('')
+                    setHint('')
+                    setPending('email')
                     try {
                       await authApi.changeEmail(email, code)
                       await reloadMe()
                       setHint('邮箱已更新')
                       setCode('')
+                      setEmail('')
+                      setEditingEmail(false)
                     } catch (err) {
                       setError(err instanceof ApiError ? err.message : '绑定失败')
+                    } finally {
+                      setPending('')
                     }
                   }}
                 >
                   {t('profile.confirm')}
                 </button>
               </div>
+              </div>}
+            </div>
+            <div className="profile-bio">
+              <label htmlFor="profile-bio">{t('profile.bio')}</label>
+              <textarea
+                id="profile-bio"
+                value={bio}
+                onChange={(e) => setBio(e.target.value)}
+                maxLength={500}
+                rows={3}
+                placeholder={t('profile.bioPlaceholder')}
+                className="profile-field profile-bio-field"
+              />
+              <button
+                type="button"
+                className="primary-button profile-save"
+                disabled={pending !== ''}
+                onClick={async () => {
+                  setError('')
+                  setHint('')
+                  setPending('bio')
+                  try {
+                    await authApi.updateMe({ bio })
+                    await reloadMe()
+                    setHint('简介已保存')
+                  } catch (err) {
+                    setError(err instanceof ApiError ? err.message : '保存失败')
+                  } finally {
+                    setPending('')
+                  }
+                }}
+              >
+                {pending === 'bio' ? <LoaderCircle size={16} className="animate-spin" /> : <Save size={16} />}
+                {t('profile.saveBio')}
+              </button>
             </div>
           </section>
 
-          <div className="space-y-6">
-            <section className="rounded-xl bg-[var(--color-surface)] p-6 shadow-card">
-              <p className="mb-3 text-sm font-medium">{t('profile.changePassword')}</p>
+          <div className="profile-secondary">
+            <details className="profile-disclosure">
+              <summary><ShieldCheck size={17} /><span>{t('profile.changePassword')}</span><ChevronDown size={16} /></summary>
+              <div className="profile-disclosure-body">
               <p className="mb-3 text-xs text-[var(--color-text-secondary)]">{t('profile.passwordHint')}</p>
               <div className="space-y-2">
                 <input
                   type="password"
+                  aria-label={t('profile.oldPassword')}
+                  autoComplete="current-password"
                   value={oldPassword}
                   onChange={(e) => setOldPassword(e.target.value)}
                   placeholder={t('profile.oldPassword')}
@@ -262,6 +285,8 @@ export default function HomePage() {
                 />
                 <input
                   type="password"
+                  aria-label={t('profile.newPassword')}
+                  autoComplete="new-password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   placeholder={t('profile.newPassword')}
@@ -269,6 +294,8 @@ export default function HomePage() {
                 />
                 <input
                   type="password"
+                  aria-label={t('profile.confirmPassword')}
+                  autoComplete="new-password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder={t('profile.confirmPassword')}
@@ -276,7 +303,8 @@ export default function HomePage() {
                 />
                 <button
                   type="button"
-                  className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm text-white"
+                  className="primary-button"
+                  disabled={pending !== ''}
                   onClick={async () => {
                     setError('')
                     setHint('')
@@ -284,6 +312,7 @@ export default function HomePage() {
                       setError('两次输入的密码不一致')
                       return
                     }
+                    setPending('password')
                     try {
                       await authApi.changePassword(oldPassword, newPassword)
                       setOldPassword('')
@@ -292,20 +321,24 @@ export default function HomePage() {
                       setHint('密码已修改，其他设备需要重新登录')
                     } catch (err) {
                       setError(err instanceof ApiError ? err.message : '修改失败')
+                    } finally {
+                      setPending('')
                     }
                   }}
                 >
                   {t('profile.submitPassword')}
                 </button>
               </div>
-            </section>
+              </div>
+            </details>
 
-            <section className="rounded-xl bg-[var(--color-surface)] p-6 shadow-card">
-              <p className="mb-3 text-sm font-medium">{t('profile.usage')}</p>
+            <details className="profile-disclosure">
+              <summary><Activity size={17} /><span>{t('profile.usage')}</span><ChevronDown size={16} /></summary>
+              <div className="profile-disclosure-body">
               {!usage || usage.total_calls === 0 ? (
                 <p className="text-sm text-[var(--color-text-secondary)]">{t('profile.usageEmpty')}</p>
               ) : (
-                <dl className="grid grid-cols-3 gap-3 text-sm">
+                <dl className="profile-usage">
                   <div>
                     <dt className="text-xs text-[var(--color-text-secondary)]">{t('profile.usageCalls')}</dt>
                     <dd className="font-medium">{usage.total_calls}</dd>
@@ -320,10 +353,12 @@ export default function HomePage() {
                   </div>
                 </dl>
               )}
-            </section>
+              </div>
+            </details>
 
-            <section className="rounded-xl bg-[var(--color-surface)] p-6 shadow-card">
-              <p className="mb-3 text-sm font-medium">{t('profile.devices')}</p>
+            <details className="profile-disclosure">
+              <summary><Monitor size={17} /><span>{t('profile.devices')}</span><small>{sessions.length}</small><ChevronDown size={16} /></summary>
+              <div className="profile-disclosure-body">
               {sessions.length === 0 && (
                 <p className="text-sm text-[var(--color-text-secondary)]">{t('profile.noDevices')}</p>
               )}
@@ -331,9 +366,9 @@ export default function HomePage() {
                 {sessions.map((session) => (
                   <li
                     key={session.device_id}
-                    className="flex items-start justify-between gap-3 rounded-md border border-[var(--color-border)] px-3 py-2 text-sm"
+                    className="profile-device"
                   >
-                    <div>
+                    <div className="min-w-0">
                       <p className="font-medium">
                         {session.device_name || session.device_id}
                         {session.is_current || session.device_id === getDeviceId() ? (
@@ -348,7 +383,7 @@ export default function HomePage() {
                     </div>
                     <button
                       type="button"
-                      className="shrink-0 text-xs text-red-600"
+                      className="profile-text-button is-danger"
                       onClick={async () => {
                         if (!window.confirm(t('profile.revokeConfirm'))) return
                         setError('')
@@ -372,11 +407,21 @@ export default function HomePage() {
                   </li>
                 ))}
               </ul>
-            </section>
+              </div>
+            </details>
+
+            <details className="profile-disclosure">
+              <summary><Info size={17} /><span>{t('profile.accountInfo')}</span><ChevronDown size={16} /></summary>
+              <dl className="profile-account-info profile-disclosure-body">
+                <div><dt>{t('profile.status')}</dt><dd>{user.status}</dd></div>
+                <div><dt>{t('profile.userId')}</dt><dd className="font-mono">{user.uuid}</dd></div>
+                <div><dt>{t('profile.createdAt')}</dt><dd>{new Date(user.created_at).toLocaleString()}</dd></div>
+              </dl>
+            </details>
 
             <button
               type="button"
-              className="w-full rounded-xl border border-red-200 bg-white px-4 py-3 text-sm text-red-600 hover:bg-red-50"
+              className="profile-logout"
               onClick={async () => {
                 try {
                   await authApi.logout(useAuthStore.getState().refreshToken)
@@ -387,11 +432,13 @@ export default function HomePage() {
                 navigate('/login', { replace: true })
               }}
             >
+              <LogOut size={15} />
               {t('profile.logout')}
             </button>
           </div>
-        </div>
+        </>
       )}
+      </div>
     </div>
   )
 }

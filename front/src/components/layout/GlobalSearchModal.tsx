@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Search, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { notesApi } from '../../api/notes'
 import { chatApi } from '../../api/chat'
@@ -96,11 +97,16 @@ export default function GlobalSearchModal() {
       onClick={closeSearch}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('topbar.search')}
         className="w-[560px] max-w-[90vw] overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-card"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-3">
+          <Search size={18} className="shrink-0 text-[var(--color-text-tertiary)]" />
           <input
+            aria-label={t('search.placeholder')}
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -109,10 +115,12 @@ export default function GlobalSearchModal() {
           />
           <button
             type="button"
-            className="text-xs text-[var(--color-text-secondary)]"
+            className="icon-button"
+            title={t('assistant.close')}
+            aria-label={t('assistant.close')}
             onClick={closeSearch}
           >
-            Esc
+            <X size={16} />
           </button>
         </div>
         <div className="flex gap-1 border-b border-[var(--color-border)] px-4 py-2">
@@ -140,7 +148,7 @@ export default function GlobalSearchModal() {
           )}
           {!q ? (
             <p className="py-10 text-center text-sm text-[var(--color-text-tertiary)]">
-              {t('search.hint')}
+              <Search size={32} className="mx-auto opacity-40" />
             </p>
           ) : empty ? (
             <p className="py-10 text-center text-sm text-[var(--color-text-tertiary)]">

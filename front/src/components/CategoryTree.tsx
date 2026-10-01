@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { UNCATEGORIZED_SENTINEL, useCategoryStore } from '../stores/useCategoryStore'
 import type { Category } from '../types/notes'
 import { ApiError } from '../api/client'
+import { ChevronDown, ChevronRight, Folder, FolderOpen, Files, Inbox, Plus, Pencil, Trash2, PanelLeftClose } from 'lucide-react'
 
 function TreeNode({
   node,
@@ -67,7 +68,7 @@ function TreeNode({
   return (
     <div>
       <div
-        className={`group flex items-center gap-1 rounded-md px-2 py-1 text-sm ${
+        className={`group flex items-center gap-1 rounded-lg px-2 py-2 text-sm ${
           active ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-gray-100'
         }`}
         style={{ paddingLeft: `${8 + depth * 12}px` }}
@@ -78,7 +79,7 @@ function TreeNode({
             onClick={() => setOpen((v) => !v)}
             aria-label={open ? '折叠' : '展开'}
           >
-            {open ? '▾' : '▸'}
+            {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
           </button>
         ) : (
           <span className="w-4" />
@@ -101,23 +102,24 @@ function TreeNode({
           />
         ) : (
           <button
-            className="min-w-0 flex-1 truncate text-left"
+            className="flex min-w-0 flex-1 items-center gap-2 text-left"
+            title={node.name}
             onClick={() => selectCategory(node.id)}
           >
-            {node.icon ? `${node.icon} ` : ''}
-            {node.name}
-            <span className="ml-1 text-xs text-gray-400">{node.note_count}</span>
+            {active ? <FolderOpen size={15} className="shrink-0 text-[var(--color-accent)]" /> : <Folder size={15} className="shrink-0 text-gray-400" />}
+            <span className="truncate">{node.name}</span>
+            <span className="count-badge ml-auto">{node.note_count}</span>
           </button>
         )}
 
-        <div className="hidden gap-0.5 group-hover:flex">
+        <div className="tree-actions flex gap-0.5">
           {depth < 2 && (
             <button
               title="新建子分类"
               className="rounded px-1 text-xs text-gray-500 hover:bg-white"
               onClick={() => setAdding(true)}
             >
-              +
+              <Plus size={12} />
             </button>
           )}
           <button
@@ -125,14 +127,14 @@ function TreeNode({
             className="rounded px-1 text-xs text-gray-500 hover:bg-white"
             onClick={() => setRenaming(true)}
           >
-            改
+            <Pencil size={12} />
           </button>
           <button
             title="删除"
             className="rounded px-1 text-xs text-red-500 hover:bg-white"
             onClick={() => void handleDelete()}
           >
-            删
+            <Trash2 size={12} />
           </button>
         </div>
       </div>
@@ -162,7 +164,7 @@ function TreeNode({
   )
 }
 
-export default function CategoryTree() {
+export default function CategoryTree({ onCollapse }: { onCollapse?: () => void }) {
   const categories = useCategoryStore((s) => s.categories)
   const uncategorizedCount = useCategoryStore((s) => s.uncategorizedCount)
   const selected = useCategoryStore((s) => s.selectedCategoryId)
@@ -194,33 +196,38 @@ export default function CategoryTree() {
   }
 
   return (
-    <aside className="flex h-full w-60 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-sidebar-bg)]">
-      <div className="flex items-center justify-between px-3 py-3">
-        <span className="text-sm font-semibold">分类</span>
+    <aside className="category-panel flex h-full w-[220px] shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-sidebar-bg)]">
+      <div className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--color-border)] px-4">
+        <span className="text-sm font-semibold">分类管理</span>
+        <div className="flex items-center gap-1">
         <button
-          className="rounded px-2 text-sm text-indigo-600 hover:bg-indigo-50"
+          className="icon-button"
+          title="新建分类"
+          aria-label="新建分类"
           onClick={() => setAddingRoot(true)}
         >
-          + 新建
+          <Plus size={16} />
         </button>
+        {onCollapse && <button className="icon-button" title="收起分类" aria-label="收起分类" onClick={onCollapse}><PanelLeftClose size={16} /></button>}
+        </div>
       </div>
 
       <button
-        className={`mx-2 rounded-md px-2 py-1.5 text-left text-sm ${
+        className={`mx-3 mt-3 flex items-center gap-2 rounded-lg px-3 py-2 text-left text-sm ${
           selected === null ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-gray-100'
         }`}
         onClick={() => selectCategory(null)}
       >
-        全部笔记
+        <Files size={16} /> 全部笔记
       </button>
       <button
-        className={`mx-2 mb-2 rounded-md px-2 py-1.5 text-left text-sm ${
+        className={`mx-3 mb-3 mt-1 flex items-center gap-2 rounded-lg px-3 py-2 text-left text-sm ${
           selected === UNCATEGORIZED_SENTINEL ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-gray-100'
         }`}
         onClick={() => selectCategory(UNCATEGORIZED_SENTINEL)}
       >
-        未分类
-        <span className="ml-1 text-xs text-gray-400">{uncategorizedCount}</span>
+        <Inbox size={16} /> 未分类
+        <span className="count-badge ml-auto">{uncategorizedCount}</span>
       </button>
 
       {addingRoot && (
@@ -240,7 +247,7 @@ export default function CategoryTree() {
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto pb-4">
+      <div className="flex-1 overflow-y-auto px-2 pb-4">
         {loading && <p className="px-3 text-xs text-gray-400">加载中…</p>}
         {error && (
           <p className="px-3 text-xs text-red-500">

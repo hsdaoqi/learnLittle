@@ -1,3 +1,4 @@
+import { GeometricBackground, IllustrationScene } from '../components/IllustrationScene'
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { authApi } from '../api/auth'
@@ -36,8 +37,12 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[var(--color-bg)] px-4 text-[var(--color-text)]">
-      <div className="w-full max-w-sm rounded-xl bg-[var(--color-surface)] p-8 shadow-card">
+    <div className="auth-page">
+      <div className="auth-decoration" aria-hidden="true"><GeometricBackground /></div>
+      <div className="auth-illustration" aria-hidden="true"><IllustrationScene /></div>
+      <div className="auth-form-area">
+      <div className="auth-card">
+        <div className="auth-brand"><span>云</span>{t('app.name')}</div>
         <h1 className="mb-1 text-2xl font-bold">{t('auth.register')}</h1>
         <p className="mb-6 text-sm text-[var(--color-text-secondary)]">{t('auth.registerHint')}</p>
 
@@ -131,6 +136,7 @@ export default function RegisterPage() {
             {t('auth.login')}
           </Link>
         </p>
+      </div>
       </div>
     </div>
   )
