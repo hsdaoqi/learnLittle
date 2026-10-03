@@ -8,6 +8,86 @@
 
 ## 当前阶段：44 深度思考开关补强
 
+### 后端完整学习教程
+
+只讲 `learnLittle` 当前后端，按注册、笔记、上传检索、对话与 Agent 等任务串联，并附所有后端函数（含测试、迁移、嵌套函数和 lambda）的逐项讲解及覆盖检查：
+[进入教程](D:/Project/learnLittle/docs/backend-tutorial/README.md)。
+
+### 2026-10-01 主流程校准
+
+本节描述当前 `/chat/query` 主链，优先于下方各阶段的历史记录；没有提前实现 45-55 阶段。
+
+```text
+用户消息提交 MySQL
+  -> 并行 RAG / MySQL 历史与摘要
+  -> LangGraph 分类路由
+  -> ReAct 或 Plan（带真实前置结果的步骤 Agent）
+  -> 助手消息提交 MySQL -> done
+  -> 标题与里程碑摘要后台维护
+```
+
+- Plan 不再硬拼工具参数；前置结果中的 `note_id/review_id` 由步骤 Agent 使用。注册表的动态函数可直接执行，不再维护固定工具白名单。
+- 无依赖只读步骤限量并行，写入步骤串行；只读步骤不提供写入工具。执行过写操作后不自动重放整轮，避免重复写入。
+- 主问答读取 SQL 全量历史，按摘要覆盖位置和 Token 配额选择未摘要消息，保留用户/助手角色；不再受 Redis 20 条、6 轮或每条 400 字截断限制。
+- `/chat/query` 将旧 `.env` 中的 `TOKEN_AGENT_SCRATCHPAD_RESERVE=0` 解释为自动预留 4000 Token；正数配置仍按指定值使用。
+- RAG 异常/超时不阻断 Agent。主聊天默认使用当前问题检索，不做 HyDE；默认向量召回，BM25+RRF 保留为可选增强。双源并行召回，重排序在线程执行。
+- 分类、规划、批判、标题可单独配置模型；规划、单步、综合、整轮有独立超时。角色模型名为空时复用主模型，以兼容现有网关。
+- Reflection 实时发送 `checking/refining/repairing`；`response_replace` 替换草稿，前端最终消息与数据库一致。ReAct 只在未执行副作用工具时允许一次外层修复。
+- LangChain 每次模型调用单独记用量，优先使用服务端 usage，缺失时才估算；历史和工具结果计入对应轮次。
+- 笔记向量同步改为事务提交后后台执行；回滚不派发，置顶/分类/标签调整不重建正文向量。按笔记串行并重读最新状态；仍保留长笔记切片和搜索结果按笔记去重。
+- 注册默认要求邮箱验证码。聊天使用一次性 60 秒 SSE 凭证；消息防重键按用户隔离，已完成请求回放存档，处理中/失败请求不会自动重跑工具。
+- 自动标题在前 3 个用户轮次后台更新，手动改名后不再覆盖。迁移将已有非默认标题保护为手动标题。
+- 分类树接入同级拖拽排序及分类管理（移动、合并、批量删除）；编辑器接入可关闭的末尾内联补全，处理输入法和过期结果。
+
+刻意保留的区别：回复提交后才发送 `done`；写入失败不自动重放；笔记继续分片。
+
+### 2026-10-02 聊天入口收敛
+
+当前唯一问答入口为 `POST /api/v1/chat/query`。已删除没有前端调用的旧 `/chat/ask`、`/chat/stream` 及其独立问答实现、旧请求响应类型和前端封装；旧 URL 现在返回 404，不保留兼容别名。会话列表、标题修改、会话删除、历史消息接口仍保留。`chat_router` 直接调用 `query_service.stream_query`；`chat_service` 只负责会话与消息数据操作。已有数据和数据库结构不变。
+
+### 2026-10-02 后端遗留代码清理
+
+- 删除旧问答入口专用的 LLM 流式改写、假流注入和提示构造；`rag/llm.py` 只保留辅助任务的非流式补全。
+- 删除固定轮数/逐条字符截断的旧历史算法、旧 `TokenBudget` 和六个无效配置。实际上下文预算仍由 `build_agent_history` 计算，Token 统计仍由 `usage_service` / `ModelUsageCallback` 记录。
+- 删除旧手写 OpenAI 工具循环及其专用参数解析、工具描述转换；真实模型统一走 LangChain ReAct，`runner.py` 保留无模型关键词工具和测试注入。
+- 删除无人调用的 `save_document` 一次性包装、`maybe_l1_refine` 非流式包装和 `dump_session` 缓存序列化。
+- 保留 SSE 上传、实时反思、会话缓存、消息热缓存、HyDE/混合检索等可选能力、测试替身接口和全部数据库迁移。真实 `.env`、数据、前端不改动。
+- 教程逐函数清单与源码链接随代码更新；下方历史阶段记录仅用于描述演进，不表示已删除的旧代码仍可调用。
+
+新增迁移 `f1a244c10001`：只新增 `chat_sessions.title_manual` 和 `chat_messages.idempotency_key` 及唯一索引，不删表、不改消息正文。更新代码的独立数据库需运行：
+
+```powershell
+.venv\Scripts\python -m alembic upgrade head
+```
+
+可选环境配置（不需要改接口字段；实际 `.env` 不随源码同步）：
+
+```dotenv
+CLASSIFIER_MODEL=
+PLAN_MODEL=
+REFLECTION_MODEL=
+TITLE_MODEL=
+CLASSIFIER_TIMEOUT=15
+PLAN_TIMEOUT=30
+PLAN_STEP_TIMEOUT=90
+PLAN_SYNTHESIZE_TIMEOUT=60
+PLAN_TOTAL_TIMEOUT=300
+PLAN_MAX_PARALLEL_STEPS=3
+REFLECTION_TIMEOUT=15
+RAG_TIMEOUT=30
+TOKEN_AGENT_SCRATCHPAD_RESERVE=4000
+CHAT_HYDE_ENABLED=false
+HYBRID_RETRIEVAL_ENABLED=false
+CHAT_AUTO_TITLE_ROUNDS=3
+REGISTRATION_REQUIRE_EMAIL=true
+```
+
+注册需要配置 SMTP；仅隔离测试或明确需要旧注册协议时关闭 `REGISTRATION_REQUIRE_EMAIL`。后台任务目前为进程内任务，并非持久化队列；进程异常退出后的重建/重试机制不在这次范围内。
+
+### 历史阶段记录
+
+以下记录各阶段当时的实现与验收，不等于所有早期策略仍用于主入口。
+
 已经完成：
 
 **基础设施与认证（01-05 阶段）**
@@ -312,7 +392,7 @@
 # 后端
 py -3.12 -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt -r requirement-dev.txt
-Copy-Item .env.example .env
+if (!(Test-Path .env)) { Copy-Item .env.example .env }
 docker compose up -d
 .venv\Scripts\python -m alembic upgrade head
 .venv\Scripts\python -m pytest
@@ -326,14 +406,15 @@ npm run dev                            # http://localhost:3000
 
 注意：本机 npm 全局缓存目录若有写入权限问题，可加 `--cache .npm-cache` 使用项目内缓存。
 
-## 前端目录同步约定
+## 源码同步约定
 
-前端代码同时维护两份，内容保持一致（每次前端改动后同步）：
+2026-10-01 按所有者本次要求，主流程校准同步前后端源码；替代此前仅同步前端的约定。
 
-- 主开发位置：`D:\Project\RAG_LearnLittleCode_Rebuild\front`
-- 同步副本：`D:\Project\learnLittle\front`（该目录下另有一份后端拷贝，由所有者自行管理，本项目不读写）
+- 主开发位置：`D:\Project\RAG_LearnLittleCode_Rebuild`
+- 同步位置：`D:\Project\learnLittle`
+- 本次范围：修改/新增的 `app`、`front/src`、`tests`、`alembic/versions`、`main.py`、依赖清单及 README / 环境配置示例。
 
-`learnLittle\front` 只包含前端文件；后端代码、依赖与配置不会写入 `D:\Project\learnLittle`。
+不覆盖实际 `.env`、`.venv`、`node_modules`、`data`、上传文件和 Git 元数据；不复制 `dist` 等构建输出。独立数据库各自通过 Alembic 增量升级，绝不通过复制数据库目录同步。前端仅构建检查，不自动启动。
 
 ## 下一阶段
 

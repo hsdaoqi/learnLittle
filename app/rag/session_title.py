@@ -1,6 +1,6 @@
-"""会话自动标题：首轮问答后生成一次，失败回退截断问句。
+"""会话标题生成；前几轮更新及手动标题保护由 query_service 管理。
 
-只在标题仍是「新对话」时写入。用户手动改名后不再覆盖。
+失败回退截断问句；旧接口仍保持仅生成一次的兼容行为。
 测试可 set_title_fn 注入，不打外网。
 """
 
@@ -83,8 +83,11 @@ async def generate_session_title(question: str, settings: Settings) -> str:
                 await timer.finish(question, "", success=False, error=str(exc))
                 raise
         elif settings.llm_api_key:
+            from app.ai_service.models import settings_for_role
+
             text = await complete_openai_compatible(
-                build_title_prompt(question), settings
+                build_title_prompt(question), settings_for_role(settings, "title"),
+                timeout=settings.classifier_timeout,
             )
         else:
             set_trace_stage("chat")

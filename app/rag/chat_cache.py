@@ -6,7 +6,7 @@
 - 会话列表：`chat:sessions:{user_id}`，JSON，短 TTL
 - 最近消息：`chat:msgs:{session_id}`，List，LPUSH 最新在前，LTRIM 只留 N 条
 
-本阶段不做游标分页、幂等键。前端消息历史仍走 MySQL 全量，避免只拿到热窗口。
+当前问答和前端完整消息历史读取 MySQL；热缓存保留独立读写能力。
 """
 
 from __future__ import annotations
@@ -36,24 +36,6 @@ def _dumps(value: Any) -> str:
 
 def _loads(raw: str) -> Any:
     return json.loads(raw)
-
-
-def dump_session(session: Any) -> dict:
-    created = getattr(session, "created_at", None)
-    updated = getattr(session, "updated_at", None)
-    if isinstance(session, dict):
-        return {
-            "id": session.get("id"),
-            "title": session.get("title"),
-            "created_at": session.get("created_at"),
-            "updated_at": session.get("updated_at"),
-        }
-    return {
-        "id": session.id,
-        "title": session.title,
-        "created_at": created.isoformat() if isinstance(created, datetime) else created,
-        "updated_at": updated.isoformat() if isinstance(updated, datetime) else updated,
-    }
 
 
 def dump_message(message: Any) -> dict:
@@ -154,7 +136,7 @@ async def rebuild_messages(
         key = messages_key(session_id)
         await redis.delete(key)
         recent = list(messages)[-max(buffer_size, 1) :]
-        for item in reversed(recent):
+        for item in recent:
             await redis.lpush(key, _dumps(dump_message(item)))
     except Exception as exc:
         logger.warning("消息热缓存回填失败: %s", exc)

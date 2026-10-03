@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { CheckSquare, ChevronLeft, ChevronRight, FileText, Folder, LayoutGrid, LayoutTemplate, PenLine, Plus, Search, Star, Trash2, X } from 'lucide-react'
 import CategoryTree from '../components/CategoryTree'
@@ -36,6 +36,8 @@ export default function NoteListPage() {
   const [sort, setSort] = useState('updated')
   const [compact, setCompact] = useState(false)
   const [creating, setCreating] = useState(false)
+  const loadVersion = useRef(0)
+  const previousCategory = useRef(selected)
 
   const options = useMemo(() => flatten(categories), [categories])
   const selectedLabel = selected === UNCATEGORIZED_SENTINEL ? '未分类' : options.find((c) => c.id === selected)?.label.split(' / ').at(-1) || '全部笔记'
@@ -46,6 +48,7 @@ export default function NoteListPage() {
   }), [notes, sort])
 
   async function load(currentKeyword = keyword) {
+    const version = ++loadVersion.current
     setLoading(true)
     setError('')
     try {
@@ -57,21 +60,28 @@ export default function NoteListPage() {
           selected && selected !== UNCATEGORIZED_SENTINEL ? selected : undefined,
         uncategorized: selected === UNCATEGORIZED_SENTINEL,
       })
-      setNotes(data.items)
-      setTotal(data.total)
+      if (version === loadVersion.current) {
+        setNotes(data.items)
+        setTotal(data.total)
+      }
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : '加载失败')
+      if (version === loadVersion.current) setError(err instanceof ApiError ? err.message : '加载失败')
     } finally {
-      setLoading(false)
+      if (version === loadVersion.current) setLoading(false)
     }
   }
 
   useEffect(() => {
-    setSelectedIds(new Set())
-    setKeyword('')
-    setTreeOpen(false)
-    void load('')
-  }, [selected])
+    const changed = previousCategory.current !== selected
+    previousCategory.current = selected
+    if (changed) {
+      setSelectedIds(new Set())
+      setKeyword('')
+      setTreeOpen(false)
+    }
+    void load(changed ? '' : keyword)
+    return () => { loadVersion.current += 1 }
+  }, [selected, categories])
 
   async function handleCreate(format: NoteFormat) {
     if (creating) return

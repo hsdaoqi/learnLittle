@@ -1,14 +1,12 @@
-"""轻量 Agent：OpenAI 函数调用循环，或无密钥时走本地关键词路由。
+"""无模型时的关键词工具降级；真实模型问答统一走 LangChain ReAct。
 
 测试可 set_agent_runner 注入。失败返回空，问答回退 RAG。
 """
 
 from __future__ import annotations
 
-import inspect
-import json
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 from app.ai_service.tool_registry import registry
@@ -21,7 +19,6 @@ AgentEvent = dict[str, Any]
 AgentRunner = Callable[[str, str, Any, Settings, str], AsyncIterator[AgentEvent]]
 
 _injected: AgentRunner | None = None
-MAX_TOOL_ROUNDS = 4
 
 TOOL_KEYWORDS: list[tuple[str, list[str]]] = [
     ("search_notes_tool", ["搜索笔记", "查找笔记", "找笔记", "搜一下笔记", "相关笔记"]),
@@ -62,24 +59,6 @@ def should_use_agent(question: str, settings: Settings) -> bool:
     return False
 
 
-def _parse_args(raw: str | dict | None) -> dict:
-    if raw is None:
-        return {}
-    if isinstance(raw, dict):
-        return raw
-    try:
-        data = json.loads(raw)
-        return data if isinstance(data, dict) else {}
-    except json.JSONDecodeError:
-        return {}
-
-
-async def _call_tool(fn: Callable[..., Awaitable[str]], arguments: dict) -> str:
-    params = inspect.signature(fn).parameters
-    kwargs = {key: value for key, value in arguments.items() if key in params}
-    return await fn(**kwargs)
-
-
 async def run_local_tool(
     question: str,
     user_id: str,
@@ -90,7 +69,7 @@ async def run_local_tool(
     name = match_local_tool(question)
     if not name:
         return
-    bound = bind_user_tools(user_id, session_factory)
+    bound = registry.bind(bind_user_tools(user_id, session_factory))
     fn = bound.get(name)
     if fn is None:
         return
@@ -108,100 +87,6 @@ async def run_local_tool(
     yield {"type": "response", "content": result}
 
 
-async def run_openai_tools(
-    question: str,
-    user_id: str,
-    session_factory,
-    settings: Settings,
-    history: str = "",
-) -> AsyncIterator[AgentEvent]:
-    import httpx
-
-    bound = bind_user_tools(user_id, session_factory)
-    tools = registry.openai_tools()
-    system = (
-        "你是学习助手。需要查笔记、统计、回顾或当前用户信息时调用工具。"
-        "工具结果用简洁中文回答用户。不要编造 note_id / review_id。"
-        "当 search_notes_tool 返回编号列表时，把「找到 N 篇…」和每条"
-        "「N. 标题 (ID: xxx) - 摘要」原样交给用户，不要丢掉 ID。"
-    )
-    messages: list[dict] = [{"role": "system", "content": system}]
-    if history.strip():
-        messages.append({"role": "system", "content": f"近期对话：\n{history.strip()}"})
-    from app.rag.note_cards import referenced_notes_prompt
-
-    refs = referenced_notes_prompt(question)
-    if refs:
-        messages.append({"role": "system", "content": f"用户本轮引用了笔记：\n{refs}"})
-    messages.append({"role": "user", "content": question})
-
-    url = settings.llm_base_url.rstrip("/") + "/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {settings.llm_api_key}",
-        "Content-Type": "application/json",
-    }
-
-    for _ in range(MAX_TOOL_ROUNDS):
-        payload = {
-            "model": settings.llm_model,
-            "stream": False,
-            "messages": messages,
-            "tools": tools,
-            "tool_choice": "auto",
-        }
-        from app.services.usage_service import UsageTimer
-
-        timer = UsageTimer("agent", settings.llm_model)
-        prompt_text = json.dumps(messages, ensure_ascii=False)
-        try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                resp = await client.post(url, headers=headers, json=payload)
-            if resp.status_code >= 400:
-                raise RuntimeError(
-                    f"Agent LLM HTTP {resp.status_code}: {resp.text[:300]}"
-                )
-            data = resp.json()
-            message = (data.get("choices") or [{}])[0].get("message") or {}
-            await timer.finish(
-                prompt_text, json.dumps(message, ensure_ascii=False), data
-            )
-        except Exception as exc:
-            await timer.finish(prompt_text, "", success=False, error=str(exc))
-            raise
-        tool_calls = message.get("tool_calls") or []
-        if not tool_calls:
-            text = (message.get("content") or "").strip()
-            if text:
-                yield {"type": "response", "content": text}
-            return
-
-        messages.append(message)
-        for call in tool_calls:
-            function = call.get("function") or {}
-            name = function.get("name") or ""
-            arguments = _parse_args(function.get("arguments"))
-            yield {"type": "tool_start", "name": name}
-            fn = bound.get(name)
-            if fn is None:
-                result = f"未知工具: {name}"
-                yield {"type": "tool_end", "name": name, "error": result}
-            else:
-                try:
-                    result = await _call_tool(fn, arguments)
-                    yield {"type": "tool_end", "name": name, "result": result}
-                except Exception as exc:
-                    result = f"工具执行失败: {exc}"
-                    logger.warning("工具 %s 失败: %s", name, exc)
-                    yield {"type": "tool_end", "name": name, "error": str(exc)}
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": call.get("id") or name,
-                    "content": result,
-                }
-            )
-
-
 async def run_agent(
     question: str,
     user_id: str,
@@ -211,12 +96,6 @@ async def run_agent(
 ) -> AsyncIterator[AgentEvent]:
     if _injected is not None:
         async for event in _injected(
-            question, user_id, session_factory, settings, history
-        ):
-            yield event
-        return
-    if settings.llm_api_key:
-        async for event in run_openai_tools(
             question, user_id, session_factory, settings, history
         ):
             yield event

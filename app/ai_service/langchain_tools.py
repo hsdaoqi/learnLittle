@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from inspect import isawaitable
 from typing import Any
 
 from pydantic import BaseModel, Field, create_model
@@ -44,30 +45,16 @@ def json_schema_to_model(name: str, schema: dict | None) -> type[BaseModel]:
 def spec_to_langchain_tool(spec: ToolSpec, bound: dict[str, Callable[..., Any]]):
     from langchain_core.tools import StructuredTool
 
-    fn = bound.get(spec.name)
+    fn = spec.fn or bound.get(spec.name)
     schema = spec.parameters or {}
-    props = schema.get("properties") or {}
-
-    if not props:
-
-        async def _run(_fn=fn, _name=spec.name) -> str:
-            if _fn is None:
-                return f"未知工具: {_name}"
-            return await _fn()
-
-        return StructuredTool.from_function(
-            name=spec.name,
-            description=spec.description,
-            coroutine=_run,
-        )
-
     model = json_schema_to_model(spec.name, schema)
 
-    async def _run(_fn=fn, _name=spec.name, **kwargs: Any) -> str:
-        if _fn is None:
-            return f"未知工具: {_name}"
+    async def _run(**kwargs: Any) -> str:
+        if fn is None:
+            return f"未知工具: {spec.name}"
         cleaned = {key: value for key, value in kwargs.items() if value is not None}
-        return await _fn(**cleaned)
+        result = fn(**cleaned)
+        return await result if isawaitable(result) else result
 
     return StructuredTool.from_function(
         name=spec.name,
@@ -78,7 +65,11 @@ def spec_to_langchain_tool(spec: ToolSpec, bound: dict[str, Callable[..., Any]])
 
 
 def build_langchain_tools(
-    user_id: str, session_factory, groups: list[str] | None = None
+    user_id: str, session_factory, groups: list[str] | None = None, *,
+    read_only: bool = False,
 ):
-    bound = bind_user_tools(user_id, session_factory)
-    return [spec_to_langchain_tool(spec, bound) for spec in registry.resolve(groups)]
+    bound = registry.bind(bind_user_tools(user_id, session_factory))
+    return [
+        spec_to_langchain_tool(spec, bound) for spec in registry.resolve(groups)
+        if not read_only or spec.parallel_safe
+    ]

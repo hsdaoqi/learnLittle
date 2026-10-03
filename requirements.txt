@@ -13,7 +13,11 @@ chromadb==1.0.15
 pypdf==5.4.0
 uvicorn[standard]==0.34.3
 httpx==0.28.1
+langchain==1.4.3
+langchain-openai==1.6.6
+langgraph==1.2.12
 tiktoken>=0.7.0
 apscheduler==3.10.4
+aiosmtplib==5.1.3
 # 可选。本地要用 bge-reranker 时再装；未安装则重排序回退词重叠
 sentence-transformers>=3.0.0

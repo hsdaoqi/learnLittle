@@ -1,12 +1,11 @@
 import { request } from './client'
-import { useAuthStore } from '../stores/useAuthStore'
-import type { ChatAskResult, ChatMessage, ChatSession, ChatSource } from '../types/chat'
+import type { ChatMessage, ChatSession, ChatSource } from '../types/chat'
 
-function dispatchChatEvent(eventName: string, payload: Record<string, unknown>, handlers: ChatStreamHandlers) {
-  const type = (payload.type as string | undefined) || eventName
+function dispatchChatEvent(payload: Record<string, unknown>, handlers: ChatStreamHandlers) {
+  const type = payload.type
   if (type === 'meta') handlers.onMeta?.(payload as never)
-  else if (type === 'token') handlers.onToken?.(String(payload.text ?? payload.content ?? ''))
   else if (type === 'response') handlers.onToken?.(String(payload.content ?? ''))
+  else if (type === 'response_replace') handlers.onReplace?.(String(payload.content ?? ''))
   else if (type === 'thinking') {
     handlers.onThinking?.({
       stage: payload.stage as string | undefined,
@@ -39,7 +38,6 @@ async function consumeChatSSE(response: Response, handlers: ChatStreamHandlers) 
   const reader = response.body!.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
-  let eventName = 'message'
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
@@ -47,16 +45,11 @@ async function consumeChatSSE(response: Response, handlers: ChatStreamHandlers) 
     const parts = buffer.split('\n')
     buffer = parts.pop() || ''
     for (const line of parts) {
-      if (line.startsWith('event:')) {
-        eventName = line.slice(6).trim()
-        continue
-      }
       if (!line.startsWith('data:')) continue
       const raw = line.slice(5).trim()
       if (!raw) continue
       const payload = JSON.parse(raw)
-      dispatchChatEvent(eventName, payload, handlers)
-      eventName = 'message'
+      dispatchChatEvent(payload, handlers)
     }
   }
 }
@@ -71,6 +64,7 @@ export interface ChatStreamHandlers {
     user_message: ChatMessage
   }) => void
   onToken?: (text: string) => void
+  onReplace?: (text: string) => void
   onToolStart?: (data: { name: string }) => void
   onToolEnd?: (data: { name: string; result?: string; error?: string | null }) => void
   onThinking?: (data: { stage?: string; content: string }) => void
@@ -97,36 +91,13 @@ export interface ChatStreamHandlers {
 }
 
 export const chatApi = {
-  ask(message: string, sessionId?: string | null) {
-    return request<ChatAskResult>('/chat/ask', {
-      method: 'POST',
-      data: { message, session_id: sessionId || undefined },
-    })
-  },
-
-  async stream(message: string, sessionId: string | null | undefined, handlers: ChatStreamHandlers) {
-    const token = useAuthStore.getState().accessToken
-    const response = await fetch('/api/v1/chat/stream', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify({ message, session_id: sessionId || undefined }),
-    })
-    if (!response.ok || !response.body) {
-      throw new Error(`流式请求失败: ${response.status}`)
-    }
-    await consumeChatSSE(response, handlers)
-  },
-
   async query(
     message: string,
     sessionId: string | null | undefined,
     handlers: ChatStreamHandlers,
-    options?: { enableThinking?: boolean },
+    options?: { enableThinking?: boolean; idempotencyKey?: string },
   ) {
-    const token = useAuthStore.getState().accessToken
+    const { token } = await request<{ token: string }>('/auth/sse-token', { method: 'POST' })
     const response = await fetch('/api/v1/chat/query', {
       method: 'POST',
       headers: {
@@ -137,6 +108,7 @@ export const chatApi = {
         message,
         session_id: sessionId || undefined,
         enable_thinking: Boolean(options?.enableThinking),
+        idempotency_key: options?.idempotencyKey || crypto.randomUUID(),
       }),
     })
     if (!response.ok || !response.body) {

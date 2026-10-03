@@ -1,7 +1,7 @@
 """认证相关 Pydantic Schema：注册、登录、Token、用户信息。
 
 本阶段注册仅需用户名 + 密码（邮箱可选）；
-邮箱验证码流程在邮件服务阶段加入，届时 email 将变为必填。
+默认注册要求邮箱验证码；仅显式关闭 registration_require_email 时兼容旧客户端。
 """
 
 import re
@@ -18,7 +18,7 @@ class UserRegister(BaseModel):
     username: str = Field(min_length=3, max_length=50, description="用户名")
     password: str = Field(min_length=8, max_length=128, description="密码")
     email: str | None = Field(
-        default=None, max_length=255, description="邮箱（可选；填写则必须带验证码）"
+        default=None, max_length=255, description="注册邮箱（默认必须与验证码一起提供）"
     )
     verification_code: str | None = Field(default=None, min_length=6, max_length=6)
 

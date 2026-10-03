@@ -1,6 +1,6 @@
 """LangChain ReAct：create_agent + astream_events。
 
-查询分类器在 chat_service 里先跑。深度思考只作用在主模型 extra_body；
+查询分类器由 chat_graph 先执行。深度思考只作用在主模型 extra_body；
 分类器 / 计划走各自的环境变量。测试可 set_react_streamer 注入，不打外网。
 """
 
@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import AsyncIterator, Callable
+from contextlib import aclosing
 from typing import Any
 
 from app.ai_service.langchain_tools import build_langchain_tools
@@ -115,6 +116,8 @@ def map_langchain_event(
     if event_type == "on_tool_start":
         name = event.get("name") or "unknown"
         consecutive_tool_calls += 1
+        tool_start_times[name] = stamp
+        produced.append({"type": "tool_start", "name": name})
         if consecutive_tool_calls > MAX_CONSECUTIVE_TOOL_CALLS:
             produced.append(
                 {
@@ -123,8 +126,6 @@ def map_langchain_event(
                 }
             )
             return produced, consecutive_tool_calls
-        tool_start_times[name] = stamp
-        produced.append({"type": "tool_start", "name": name})
         return produced, consecutive_tool_calls
 
     if event_type == "on_tool_end":
@@ -165,6 +166,8 @@ def _create_chat_model(settings: Settings, *, enable_thinking: bool, timeout: in
     from langchain_openai import ChatOpenAI
 
     from app.ai_service.thinking import extra_body
+    from app.ai_service.usage_callback import ModelUsageCallback
+    from app.services.usage_service import get_trace_context
 
     kwargs: dict[str, Any] = {
         "model": settings.llm_model,
@@ -172,6 +175,11 @@ def _create_chat_model(settings: Settings, *, enable_thinking: bool, timeout: in
         "base_url": settings.llm_base_url,
         "streaming": True,
         "timeout": timeout,
+        "stream_usage": True,
+        "max_retries": 0,
+        "callbacks": [ModelUsageCallback(
+            settings.llm_model, (get_trace_context() or {}).get("stage") or "agent"
+        )],
     }
     body = extra_body(enable_thinking, settings)
     if body is not None:
@@ -190,13 +198,17 @@ def _create_agent(model, tools, system_prompt: str):
         return create_react_agent(model, tools or [], prompt=system_prompt)
 
 
-def _history_messages(history: str, summary: str) -> list:
-    from langchain_core.messages import SystemMessage
+def _history_messages(history: str | list[dict], summary: str) -> list:
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
     messages = []
     if (summary or "").strip():
         messages.append(SystemMessage(content=f"[历史对话摘要]\n{summary.strip()}"))
-    if (history or "").strip():
+    if isinstance(history, list):
+        for item in history:
+            cls = HumanMessage if item["role"] == "user" else AIMessage
+            messages.append(cls(content=item["content"]))
+    elif (history or "").strip():
         messages.append(SystemMessage(content=f"近期对话：\n{history.strip()}"))
     return messages
 
@@ -207,85 +219,105 @@ async def run_langchain_react(
     session_factory,
     settings: Settings,
     *,
-    history: str = "",
+    history: str | list[dict] = "",
     summary: str = "",
     rag_context: str = "",
     enable_thinking: bool = False,
     timeout: int | None = None,
+    tool_groups: list[str] | None = None,
+    extra_system: str = "",
+    reflect: bool = True,
+    read_only: bool = False,
 ) -> AsyncIterator[dict[str, Any]]:
     from langchain_core.messages import HumanMessage
 
     from app.ai_service.thinking import agent_timeout
-    from app.services.usage_service import UsageTimer
-
     timeout = agent_timeout(settings, enable_thinking, timeout=timeout)
-    system_prompt = build_react_system_prompt(question, rag_context=rag_context)
-    tools = build_langchain_tools(user_id, session_factory)
+    system_prompt = build_react_system_prompt(
+        question, rag_context=rag_context, extra_system=extra_system
+    )
+    tools = build_langchain_tools(user_id, session_factory, tool_groups, read_only=read_only)
     model = _create_chat_model(
         settings, enable_thinking=enable_thinking, timeout=timeout
     )
-    agent = _create_agent(model, tools, system_prompt)
-    payload = {
-        "messages": [
-            *_history_messages(history, summary),
-            HumanMessage(content=visible_question(question) or question),
-        ]
-    }
-
     accumulated: list[str] = []
-    consecutive = 0
-    tool_start_times: dict[str, float] = {}
-    timer = UsageTimer("agent", settings.llm_model)
-    prompt_text = system_prompt + "\n" + question
     try:
         import asyncio
+        from app.ai_service.reflection import build_repair_note, no_retry_tools, stream_l1_refine
 
         async with asyncio.timeout(timeout):
-            async for event in agent.astream_events(payload, version="v2"):
-                mapped, consecutive = map_langchain_event(
-                    event,
-                    consecutive_tool_calls=consecutive,
-                    tool_start_times=tool_start_times,
-                )
-                for item in mapped:
-                    if item.get("type") == "response":
-                        accumulated.append(item.get("content") or "")
-                    yield item
-                    if item.get("type") == "error":
-                        await timer.finish(
-                            prompt_text,
-                            "".join(accumulated),
-                            success=False,
-                            error=item.get("content"),
+            repair_note = ""
+            for attempt in range(2):
+                accumulated = []
+                consecutive = 0
+                tool_start_times: dict[str, float] = {}
+                failure = None
+                failed_tool = None
+                touched_side_effect = False
+                agent = _create_agent(model, tools, system_prompt)
+                payload = {"messages": [
+                    *_history_messages(history, summary),
+                    HumanMessage(content=(visible_question(question) or question) + repair_note),
+                ]}
+                try:
+                    async for event in agent.astream_events(
+                        payload, version="v2", config={"recursion_limit": 30}
+                    ):
+                        mapped, consecutive = map_langchain_event(
+                            event, consecutive_tool_calls=consecutive,
+                            tool_start_times=tool_start_times,
                         )
-                        return
-        await timer.finish(prompt_text, "".join(accumulated))
-        final = "".join(accumulated)
-        from app.ai_service.reflection import maybe_l1_refine
-        from app.rag.note_cards import visible_question as _visible
+                        for item in mapped:
+                            kind = item.get("type")
+                            if kind == "response":
+                                accumulated.append(item.get("content") or "")
+                            elif kind == "tool_start":
+                                from app.ai_service.tool_registry import registry
 
-        final, reflection_events = await maybe_l1_refine(
-            _visible(question) or question,
-            final,
-            settings,
-            enable_thinking=enable_thinking,
-        )
-        for event in reflection_events:
-            yield event
-        if reflection_events and final != "".join(accumulated):
-            yield {"type": "response", "content": final}
-        yield {"type": "stream_done", "full_response": final}
+                                spec = registry.get(item["name"])
+                                touched_side_effect |= (
+                                    item["name"] in no_retry_tools(settings)
+                                    or spec is None or not spec.parallel_safe
+                                )
+                            elif kind == "tool_end" and item.get("error"):
+                                failed_tool = item["name"]
+                            elif kind == "error":
+                                failure = item
+                                break
+                            yield item
+                        if failure:
+                            break
+                except Exception as exc:
+                    logger.warning("ReAct 执行失败", exc_info=True)
+                    failure = {"type": "error", "content": "工具或模型执行失败，请稍后重试"}
+                    repair_note = build_repair_note(failed_tool, type(exc).__name__)
+                if failure is None:
+                    break
+                if attempt or not settings.reflection_l2_enabled or touched_side_effect:
+                    yield failure
+                    return
+                yield {"type": "reflection", "stage": "repairing", "round": 1}
+                yield {"type": "response_replace", "content": ""}
+                repair_note = repair_note or build_repair_note(failed_tool, failure["content"])
+            final = "".join(accumulated)
+            if reflect:
+                async for event in stream_l1_refine(
+                    visible_question(question) or question, final, settings,
+                    enable_thinking=enable_thinking, context=system_prompt,
+                ):
+                    if event["type"] == "stream_done":
+                        refined = event["full_response"]
+                        if refined != final:
+                            yield {"type": "response_replace", "content": refined}
+                        final = refined
+                    else:
+                        yield event
+            yield {"type": "stream_done", "full_response": final}
     except TimeoutError:
         logger.warning("ReAct 响应超时 (timeout=%ss)", timeout)
-        await timer.finish(
-            prompt_text, "".join(accumulated), success=False, error="timeout"
-        )
         yield {"type": "error", "content": "生成超时，请稍后重试"}
     except Exception as exc:
         logger.warning("ReAct 执行失败: %s", exc)
-        await timer.finish(
-            prompt_text, "".join(accumulated), success=False, error=str(exc)
-        )
         yield {"type": "error", "content": "生成失败，请稍后重试"}
 
 
@@ -295,26 +327,19 @@ async def run_react(
     session_factory,
     settings: Settings,
     *,
-    history: str = "",
+    history: str | list[dict] = "",
     summary: str = "",
     rag_context: str = "",
     enable_thinking: bool = False,
     timeout: int | None = None,
+    tool_groups: list[str] | None = None,
+    extra_system: str = "",
+    reflect: bool = True,
+    read_only: bool = False,
 ) -> AsyncIterator[dict[str, Any]]:
-    if _injected is not None:
-        async for event in _injected(
-            question,
-            user_id,
-            session_factory,
-            settings,
-            history=history,
-            summary=summary,
-            rag_context=rag_context,
-            enable_thinking=enable_thinking,
-        ):
-            yield event
-        return
-    async for event in run_langchain_react(
+    fn = _injected or run_langchain_react
+    kwargs = {} if _injected else {"timeout": timeout}
+    stream = fn(
         question,
         user_id,
         session_factory,
@@ -323,6 +348,9 @@ async def run_react(
         summary=summary,
         rag_context=rag_context,
         enable_thinking=enable_thinking,
-        timeout=timeout,
-    ):
-        yield event
+        tool_groups=tool_groups, extra_system=extra_system, reflect=reflect,
+        read_only=read_only, **kwargs,
+    )
+    async with aclosing(stream):
+        async for event in stream:
+            yield event

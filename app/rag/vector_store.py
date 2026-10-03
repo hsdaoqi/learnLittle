@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Literal
 
@@ -238,12 +239,13 @@ class VectorStoreService:
             return []
         candidate_k = self._candidate_k(top_k)
         vector_hits = await self._vector_search(query, user_id, candidate_k, collection)
-        lexical_hits = self._bm25_search(query, user_id, candidate_k, collection)
-        fused = rrf_fuse(
-            [vector_hits, lexical_hits],
-            k=self.settings.rrf_k,
-        )
-        return self._maybe_rerank(query, fused, top_k, rerank)
+        fused = vector_hits
+        if self.settings.hybrid_retrieval_enabled:
+            lexical_hits = await asyncio.to_thread(
+                self._bm25_search, query, user_id, candidate_k, collection
+            )
+            fused = rrf_fuse([vector_hits, lexical_hits], k=self.settings.rrf_k)
+        return await asyncio.to_thread(self._maybe_rerank, query, fused, top_k, rerank)
 
     async def compute_route_score(self, query: str, user_id: str) -> float:
         """当前用户知识库 + 笔记的 Top-1 余弦距离，越小越相关。
@@ -285,10 +287,21 @@ class VectorStoreService:
         query 用于向量/BM25 召回（可以是 HyDE 文本）；
         rerank_query 缺省等于 query，问答传入原问题以免假设句冲掉用户用词。
         """
-        rag_hits = await self.search(query, user_id, top_k, "rag", rerank=False)
-        note_hits = await self.search(query, user_id, top_k, "notes", rerank=False)
-        fused = rrf_fuse([rag_hits, note_hits], k=self.settings.rrf_k)
-        return self._maybe_rerank(rerank_query or query, fused, top_k, True)
+        self._ensure()
+        rag_hits, note_hits = await asyncio.gather(
+            self.search(query, user_id, top_k * 2, "rag", rerank=False),
+            self.search(query, user_id, top_k * 2, "notes", rerank=False),
+        )
+        fused = (
+            rrf_fuse([rag_hits, note_hits], k=self.settings.rrf_k)
+            if self.settings.hybrid_retrieval_enabled
+            else sorted(
+                rag_hits + note_hits, key=lambda hit: hit["score"], reverse=True
+            )
+        )
+        return await asyncio.to_thread(
+            self._maybe_rerank, rerank_query or query, fused, top_k, True
+        )
 
     def delete_document(self, document_id: int | str) -> None:
         self._delete_by("rag", "document_id", str(document_id))

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import logging
 import re
 from collections.abc import Awaitable, Callable
@@ -126,10 +127,14 @@ async def critique_answer(
     try:
         from app.ai_service.thinking import complete_thinking_for
 
+        from app.ai_service.models import settings_for_role
+
+        role_settings = settings_for_role(settings, "reflection")
         raw = await complete_openai_compatible(
             build_critique_prompt(user_message, plan_summary, step_results, draft),
-            settings,
-            enable_thinking=complete_thinking_for("reflection", settings),
+            role_settings,
+            enable_thinking=complete_thinking_for("reflection", role_settings),
+            timeout=settings.reflection_timeout,
         )
         return parse_critique_response(raw)
     except Exception as exc:
@@ -146,6 +151,7 @@ async def refine_answer(
     settings: Settings,
     *,
     enable_thinking: bool = False,
+    context: str = "",
 ) -> str:
     from app.rag.llm import complete_openai_compatible
     from app.services import usage_service
@@ -154,55 +160,47 @@ async def refine_answer(
     usage_service.set_trace_stage("reflection")
     try:
         text = await complete_openai_compatible(
-            build_refine_prompt(user_message, draft, issues),
+            context + "\n\n" + build_refine_prompt(user_message, draft, issues),
             settings,
             enable_thinking=enable_thinking,
+            timeout=settings.plan_synthesize_timeout * (2 if enable_thinking else 1),
         )
         return (text or "").strip()
     finally:
         usage_service.set_trace_stage(previous)
 
 
-async def maybe_l1_refine(
-    user_message: str,
-    draft: str,
-    settings: Settings,
-    *,
-    plan_summary: str = "",
-    step_results: str = "",
-    enable_thinking: bool = False,
-) -> tuple[str, list[dict]]:
-    """草稿过短或关闭开关则原样返回。不合格时返回修正稿；修正失败仍用草稿。"""
-    events: list[dict] = []
+async def stream_l1_refine(
+    user_message: str, draft: str, settings: Settings, *,
+    plan_summary: str = "", step_results: str = "",
+    enable_thinking: bool = False, context: str = "",
+):
     text = (draft or "").strip()
-    if not settings.reflection_l1_enabled:
-        return text, events
-    if len(text) < settings.reflection_min_answer_chars:
-        return text, events
-    if _injected is None and not settings.llm_api_key:
-        return text, events
-    events.append({"type": "reflection", "stage": "checking", "round": 0})
-    verdict = await critique_answer(
-        user_message,
-        text,
-        settings,
-        plan_summary=plan_summary,
-        step_results=step_results,
+    enabled = (
+        settings.reflection_l1_enabled
+        and len(text) >= settings.reflection_min_answer_chars
+        and (_injected is not None or settings.llm_api_key)
     )
-    if verdict.passed:
-        return text, events
-    events.append({"type": "reflection", "stage": "refining", "round": 1})
-    try:
-        refined = await refine_answer(
-            user_message,
-            text,
-            verdict.issues,
-            settings,
-            enable_thinking=enable_thinking,
-        )
-    except Exception as exc:
-        logger.warning("L1 修正失败，保留草稿: %s", exc)
-        return text, events
-    if refined:
-        return refined, events
-    return text, events
+    if enabled:
+        yield {"type": "reflection", "stage": "checking", "round": 0}
+        try:
+            async with asyncio.timeout(settings.reflection_timeout):
+                verdict = await critique_answer(
+                    user_message, text, settings,
+                    plan_summary=plan_summary, step_results=step_results,
+                )
+        except Exception:
+            verdict = ReflectionVerdict(True)
+        if not verdict.passed:
+            yield {"type": "reflection", "stage": "refining", "round": 1}
+            try:
+                async with asyncio.timeout(settings.plan_synthesize_timeout * (2 if enable_thinking else 1)):
+                    refined = await refine_answer(
+                        user_message, text, verdict.issues, settings,
+                        enable_thinking=enable_thinking, context=context,
+                    )
+                text = refined or text
+            except Exception:
+                logger.warning("L1 修正失败，保留草稿", exc_info=True)
+        yield {"type": "reflection", "stage": "", "round": 0}
+    yield {"type": "stream_done", "full_response": text}

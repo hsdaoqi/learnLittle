@@ -5,6 +5,7 @@ import { usageApi, type UsageSummary } from '../api/usage'
 import { ApiError } from '../api/client'
 import { getDeviceId } from '../api/device'
 import { useT } from '../i18n'
+import { useCountdown } from '../hooks/useCountdown'
 import { useAuthStore } from '../stores/useAuthStore'
 import { Activity, Camera, Check, ChevronDown, Info, LoaderCircle, LogOut, Mail, Monitor, Save, ShieldCheck, UserRound } from 'lucide-react'
 
@@ -29,6 +30,7 @@ export default function HomePage() {
   const [uploading, setUploading] = useState(false)
   const [editingEmail, setEditingEmail] = useState(false)
   const [pending, setPending] = useState('')
+  const { remainingSeconds, startCountdown } = useCountdown()
 
   useEffect(() => {
     let cancelled = false
@@ -174,14 +176,16 @@ export default function HomePage() {
               />
                 <button
                   type="button"
-                  className="primary-button"
-                  disabled={pending !== '' || !email.trim()}
+                  className="primary-button min-w-[112px] whitespace-nowrap"
+                  disabled={pending !== '' || !email.trim() || remainingSeconds > 0}
                   onClick={async () => {
+                    if (pending !== '' || remainingSeconds > 0) return
                     setError('')
                     setHint('')
                     setPending('code')
                     try {
                       await authApi.sendCode(email)
+                      startCountdown(60)
                       setHint('验证码已发送')
                     } catch (err) {
                       setError(err instanceof ApiError ? err.message : '发送失败')
@@ -190,7 +194,11 @@ export default function HomePage() {
                     }
                   }}
                 >
-                  {t('profile.send')}
+                  {pending === 'code'
+                    ? t('auth.sendingCode')
+                    : remainingSeconds > 0
+                      ? t('auth.resendCountdown').replace('{seconds}', String(remainingSeconds))
+                      : t('profile.send')}
                 </button>
               </div>
               <label className="sr-only" htmlFor="profile-email-code">{t('profile.code')}</label>

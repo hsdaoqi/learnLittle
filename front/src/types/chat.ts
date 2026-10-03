@@ -23,14 +23,3 @@ export interface ChatSource {
   section_title: string
   chunk_index: number
 }
-
-export interface ChatAskResult {
-  session_id: string
-  answer: string
-  sources: ChatSource[]
-  used_retrieval?: boolean
-  route_distance?: number | null
-  title?: string | null
-  user_message: ChatMessage
-  assistant_message: ChatMessage
-}

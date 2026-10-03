@@ -18,7 +18,7 @@
 注意路由顺序：静态路径必须注册在 /note/{note_id} 之前。
 """
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -256,6 +256,7 @@ async def export_note_email(
 @router.delete("/note/{note_id}/permanent", summary="彻底删除笔记")
 async def permanent_delete_note(
     note_id: str,
+    request: Request,
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db_session),
 ):

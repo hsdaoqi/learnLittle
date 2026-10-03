@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { notesApi } from '../api/notes'
 import { ApiError } from '../api/client'
 import TagInput from '../components/TagInput'
+import CompletionTextarea from '../components/CompletionTextarea'
 import { useCategoryStore } from '../stores/useCategoryStore'
 import type { Category } from '../types/notes'
 import { ArrowLeft, Eye, EyeOff, Mail, Save, Trash2 } from 'lucide-react'
@@ -32,12 +33,18 @@ export default function NoteEditorPage({ onSaved }: { onSaved?: () => void }) {
   const [showPreview, setShowPreview] = useState(true)
   const [format, setFormat] = useState<'md' | 'txt'>('md')
   const [aiBusy, setAiBusy] = useState(false)
+  const [completionEnabled, setCompletionEnabled] = useState(false)
 
   useEffect(() => {
     if (!noteId) return
+    let active = true
+    setLoaded(false)
+    setError('')
+    setSavedAt(null)
     notesApi
       .detail(noteId)
       .then((note) => {
+        if (!active) return
         setTitle(note.title)
         setContent(note.content)
         setTags(note.tags ?? [])
@@ -46,7 +53,10 @@ export default function NoteEditorPage({ onSaved }: { onSaved?: () => void }) {
         setShowPreview(note.format !== 'txt')
         setLoaded(true)
       })
-      .catch((err) => setError(err instanceof ApiError ? err.message : '加载失败'))
+      .catch((err) => {
+        if (active) setError(err instanceof ApiError ? err.message : '加载失败')
+      })
+    return () => { active = false }
   }, [noteId])
 
   const save = useCallback(async () => {
@@ -120,8 +130,8 @@ export default function NoteEditorPage({ onSaved }: { onSaved?: () => void }) {
 
   const options = flatten(categories)
 
-  if (!loaded && !error) {
-    return <p className="p-6 text-sm text-gray-400">加载中…</p>
+  if (!loaded) {
+    return <p className={`p-6 text-sm ${error ? 'text-red-500' : 'text-gray-400'}`}>{error || '加载中…'}</p>
   }
 
   return (
@@ -198,6 +208,12 @@ export default function NoteEditorPage({ onSaved }: { onSaved?: () => void }) {
 
       <div className="editor-metadata flex flex-wrap items-center gap-3 border-b border-gray-100 bg-white px-4 py-2">
         <TagInput tags={tags} onChange={setTags} />
+        <label className="flex shrink-0 items-center gap-1.5 text-xs text-gray-600"
+          title="AI 补全；Tab 接受，Esc 忽略">
+          <input type="checkbox" checked={completionEnabled}
+            onChange={(event) => setCompletionEnabled(event.target.checked)} />
+          AI 补全
+        </label>
         <button
           disabled={aiBusy}
           onClick={() => void runWrite('continue')}
@@ -232,12 +248,11 @@ export default function NoteEditorPage({ onSaved }: { onSaved?: () => void }) {
       {error && <p className="px-4 py-2 text-sm text-red-500">{error}</p>}
 
       <div className={`editor-paper min-h-0 flex-1 ${format !== 'txt' && showPreview ? 'grid grid-cols-2' : 'flex'}`}>
-        <textarea
+        <CompletionTextarea
+          key={noteId}
           value={content}
-          onChange={(e) => setContent(e.target.value)}
-          aria-label="笔记正文"
-          placeholder="开始记录…"
-          className="h-full min-h-0 w-full resize-none border-r border-gray-200 bg-white p-6 font-mono text-sm leading-7 outline-none"
+          onChange={setContent}
+          enabled={completionEnabled && !aiBusy && loaded}
         />
         {format !== 'txt' && showPreview && (
           <div className="h-full overflow-y-auto bg-gray-50 p-6">

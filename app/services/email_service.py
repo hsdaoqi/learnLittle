@@ -144,6 +144,8 @@ async def send_email(
             async with aiosmtplib.SMTP(
                 hostname=settings.smtp_host,
                 port=settings.smtp_port,
+                # Windows 用户名/主机名可能含中文，SMTP EHLO 只接受 ASCII。
+                local_hostname="localhost",
                 timeout=10,
                 start_tls=True,
             ) as smtp:
@@ -219,6 +221,7 @@ async def verify_code(email: str, code: str) -> bool:
 
 
 async def enforce_send_code_limits(email: str, client_ip: str | None) -> None:
+    """检查邮箱冷却及 IP 小时计数"""
     redis = get_redis()
     cooldown_key = f"email_code_cooldown:{email}"
     if await redis.exists(cooldown_key):

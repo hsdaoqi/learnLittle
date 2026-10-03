@@ -188,7 +188,8 @@ async def format_today_reviews_text(db: AsyncSession, user_id: str) -> str:
     if not reviews:
         return "今日没有待回顾的笔记"
     lines = [
-        f"- [{item['note_title']}] (第{item['review_count'] + 1}次回顾)"
+        f"- [{item['note_title']}] (review_id: {item['review_id']}, "
+        f"note_id: {item['note_id']}, 第{item['review_count'] + 1}次回顾)"
         for item in reviews
     ]
     return f"今日待回顾 ({len(reviews)} 篇):\n" + "\n".join(lines)

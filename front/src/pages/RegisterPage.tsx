@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { authApi } from '../api/auth'
 import { ApiError } from '../api/client'
 import { useT } from '../i18n'
+import { useCountdown } from '../hooks/useCountdown'
 
 export default function RegisterPage() {
   const t = useT()
@@ -15,6 +16,7 @@ export default function RegisterPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [sending, setSending] = useState(false)
+  const { remainingSeconds, startCountdown } = useCountdown()
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -83,10 +85,11 @@ export default function RegisterPage() {
             </label>
             <input
               type="email"
+              required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-              placeholder="可选；填写则需验证码"
+              placeholder="邮箱地址"
             />
           </div>
           {email && (
@@ -97,18 +100,23 @@ export default function RegisterPage() {
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
                   maxLength={6}
+                  minLength={6}
+                  required
+                  pattern="[0-9]{6}"
                   className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm outline-none"
                   placeholder="6 位数字"
                 />
                 <button
                   type="button"
-                  disabled={sending}
-                  className="rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  disabled={sending || remainingSeconds > 0}
+                  className="min-w-[112px] shrink-0 whitespace-nowrap rounded-md border border-gray-300 px-3 py-2 text-sm disabled:opacity-50"
                   onClick={async () => {
+                    if (sending || remainingSeconds > 0) return
                     setSending(true)
                     setError('')
                     try {
                       await authApi.sendCode(email)
+                      startCountdown(60)
                     } catch (err) {
                       setError(err instanceof ApiError ? err.message : '发送失败')
                     } finally {
@@ -116,7 +124,11 @@ export default function RegisterPage() {
                     }
                   }}
                 >
-                  {sending ? '发送中' : '发送验证码'}
+                  {sending
+                    ? t('auth.sendingCode')
+                    : remainingSeconds > 0
+                      ? t('auth.resendCountdown').replace('{seconds}', String(remainingSeconds))
+                      : t('auth.sendCode')}
                 </button>
               </div>
             </div>

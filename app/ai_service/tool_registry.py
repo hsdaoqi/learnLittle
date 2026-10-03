@@ -12,8 +12,9 @@ class ToolSpec:
     name: str
     description: str
     parameters: dict
-    fn: Callable[..., Any]
+    fn: Callable[..., Any] | None
     group: str = "base"
+    parallel_safe: bool = False
 
 
 class ToolRegistry:
@@ -46,18 +47,26 @@ class ToolRegistry:
                         names.append(name)
         return [self._specs[name] for name in names if name in self._specs]
 
-    def openai_tools(self, groups: list[str] | None = None) -> list[dict]:
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": spec.name,
-                    "description": spec.description,
-                    "parameters": spec.parameters,
-                },
-            }
-            for spec in self.resolve(groups)
-        ]
+    def unregister(self, name: str) -> None:
+        self._specs.pop(name, None)
+        for names in self._groups.values():
+            while name in names:
+                names.remove(name)
 
+    def bind(self, builtins: dict[str, Callable]) -> dict[str, Callable]:
+        return {
+            spec.name: spec.fn or builtins[spec.name]
+            for spec in self.resolve()
+            if spec.fn is not None or spec.name in builtins
+        }
+
+    def groups_for(self, name: str) -> list[str] | None:
+        spec = self.get(name)
+        if spec is None:
+            return None
+        groups = ["base", spec.group]
+        if spec.group == "note_write":
+            groups.append("note_read")
+        return list(dict.fromkeys(groups))
 
 registry = ToolRegistry()

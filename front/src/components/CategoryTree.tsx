@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react'
 import { UNCATEGORIZED_SENTINEL, useCategoryStore } from '../stores/useCategoryStore'
 import type { Category } from '../types/notes'
 import { ApiError } from '../api/client'
-import { ChevronDown, ChevronRight, Folder, FolderOpen, Files, Inbox, Plus, Pencil, Trash2, PanelLeftClose } from 'lucide-react'
+import { categoryApi } from '../api/category'
+import CategoryManager from './CategoryManager'
+import { ChevronDown, ChevronRight, Folder, FolderOpen, Files, Inbox, Plus, Pencil, Trash2, PanelLeftClose, Settings2 } from 'lucide-react'
 
 function TreeNode({
   node,
@@ -22,6 +24,24 @@ function TreeNode({
   const [adding, setAdding] = useState(false)
   const [childName, setChildName] = useState('')
   const [error, setError] = useState('')
+  const [dragOver, setDragOver] = useState(false)
+  const categories = useCategoryStore((s) => s.categories)
+  const refresh = useCategoryStore((s) => s.fetchCategories)
+
+  async function drop(sourceId: string) {
+    function flatten(nodes: Category[]): Category[] {
+      return nodes.flatMap((item) => [item, ...flatten(item.children)])
+    }
+    const source = flatten(categories).find((item) => item.id === sourceId)
+    if (!source || source.id === node.id || source.parent_id !== node.parent_id) return
+    const siblings = flatten(categories).filter((item) => item.parent_id === node.parent_id)
+    const ids = siblings.map((item) => item.id).filter((id) => id !== sourceId)
+    ids.splice(ids.indexOf(node.id), 0, sourceId)
+    try {
+      await categoryApi.reorder(node.parent_id, ids)
+      await refresh()
+    } catch (err) { setError(err instanceof ApiError ? err.message : '排序失败') }
+  }
 
   async function submitRename() {
     const trimmed = name.trim()
@@ -68,10 +88,22 @@ function TreeNode({
   return (
     <div>
       <div
+        draggable={!renaming && !adding}
+        onDragStart={(e) => { e.stopPropagation(); e.dataTransfer.setData('application/x-category-id', node.id) }}
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes('application/x-category-id')) {
+            e.preventDefault(); e.stopPropagation(); setDragOver(true)
+          }
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault(); e.stopPropagation(); setDragOver(false)
+          void drop(e.dataTransfer.getData('application/x-category-id'))
+        }}
         className={`group flex items-center gap-1 rounded-lg px-2 py-2 text-sm ${
           active ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-gray-100'
         }`}
-        style={{ paddingLeft: `${8 + depth * 12}px` }}
+        style={{ paddingLeft: `${8 + depth * 12}px`, boxShadow: dragOver ? 'inset 0 2px var(--color-accent)' : undefined }}
       >
         {node.children.length > 0 ? (
           <button
@@ -175,6 +207,7 @@ export default function CategoryTree({ onCollapse }: { onCollapse?: () => void }
   const createCategory = useCategoryStore((s) => s.createCategory)
   const [addingRoot, setAddingRoot] = useState(false)
   const [rootName, setRootName] = useState('')
+  const [managing, setManaging] = useState(false)
 
   useEffect(() => {
     void fetchCategories()
@@ -200,6 +233,8 @@ export default function CategoryTree({ onCollapse }: { onCollapse?: () => void }
       <div className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--color-border)] px-4">
         <span className="text-sm font-semibold">分类管理</span>
         <div className="flex items-center gap-1">
+        <button className="icon-button" title="移动、合并与排序" aria-label="分类管理"
+          onClick={() => setManaging(true)}><Settings2 size={16} /></button>
         <button
           className="icon-button"
           title="新建分类"
@@ -211,6 +246,7 @@ export default function CategoryTree({ onCollapse }: { onCollapse?: () => void }
         {onCollapse && <button className="icon-button" title="收起分类" aria-label="收起分类" onClick={onCollapse}><PanelLeftClose size={16} /></button>}
         </div>
       </div>
+      {managing && <CategoryManager onClose={() => setManaging(false)} />}
 
       <button
         className={`mx-3 mt-3 flex items-center gap-2 rounded-lg px-3 py-2 text-left text-sm ${

@@ -16,7 +16,6 @@ from app.db.database import get_db_session
 from app.models.base import Base
 from app.rag.embeddings import reset_embedding_cache, set_embed_fn
 from app.rag.hyde import set_hyde_fn
-from app.rag.llm import set_llm_stream
 from app.rag.memory import set_summary_fn
 from app.rag.rag_route import set_route_fn
 from app.rag.rag_summarize import set_summarize_fn
@@ -25,6 +24,24 @@ from app.ai_service.react_agent import set_react_streamer
 from app.rag.retriever import reset_cross_encoder, set_rerank_fn
 from app.rag.vector_store import VectorStoreService, close_vector_store, set_vector_store
 from main import create_app
+
+
+@pytest.fixture(autouse=True)
+def isolated_configuration(monkeypatch):
+    from app.config import get_settings
+    from app.ai_service.plan_execute import set_plan_fn, set_plan_streamer
+    from app.ai_service.query_classifier import set_classifier_fn
+    from app.ai_service.reflection import set_critique_fn
+
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
+    get_settings.cache_clear()
+    yield
+    set_plan_fn(None)
+    set_plan_streamer(None)
+    set_classifier_fn(None)
+    set_critique_fn(None)
+    set_react_streamer(None)
+    get_settings.cache_clear()
 
 
 @pytest.fixture()
@@ -36,6 +53,7 @@ def client(tmp_path):
     redis_module.set_redis(fakeredis.aioredis.FakeRedis(decode_responses=True))
 
     settings = Settings(
+        _env_file=None,
         app_env="test",
         upload_dir=str(tmp_path / "uploads"),
         avatar_dir=str(tmp_path / "avatars"),
@@ -43,6 +61,7 @@ def client(tmp_path):
         llm_api_key="",
         embedding_api_key="",
         rate_limit_enabled=False,
+        registration_require_email=False,
     )
     set_vector_store(VectorStoreService(settings, client=chromadb.EphemeralClient()))
     app = create_app(settings)
@@ -53,6 +72,7 @@ def client(tmp_path):
     async def _create_tables():
         async with engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
+        await engine.dispose()
 
     asyncio.run(_create_tables())
     from app.services.usage_service import set_session_factory as set_usage_session_factory
@@ -72,10 +92,15 @@ def client(tmp_path):
 
     try:
         with TestClient(app) as test_client:
-            yield test_client
+            try:
+                yield test_client
+            finally:
+                from app.core.task_runner import drain_background_tasks
+
+                test_client.portal.call(drain_background_tasks)
+                test_client.portal.call(engine.dispose)
     finally:
         close_vector_store()
-        set_llm_stream(None)
         set_embed_fn(None)
         set_rerank_fn(None)
         reset_cross_encoder()

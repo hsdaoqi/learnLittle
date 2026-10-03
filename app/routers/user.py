@@ -1,7 +1,8 @@
 """用户认证与资料路由。
 
 端点：
-- POST /auth/register - 用户注册（用户名 + 密码，邮箱可选）
+- POST /auth/register - 用户注册（默认要求邮箱验证码）
+- POST /auth/sse-token - 一次性 60 秒聊天凭证
 - POST /auth/login    - 用户登录，返回 Access/Refresh Token
 - POST /auth/refresh  - 刷新 Access Token（白名单校验 + 轮换）
 - POST /auth/logout   - 登出：拉黑 Access Token + 吊销 Refresh Token
@@ -83,7 +84,7 @@ router = APIRouter()
 
 
 @router.post("/auth/register", summary="用户注册")
-async def register(data: UserRegister, db: AsyncSession = Depends(get_db_session)):
+async def register(data: UserRegister, request: Request, db: AsyncSession = Depends(get_db_session)):
     """校验用户名/邮箱唯一性与密码强度，创建用户记录。"""
     result = await db.execute(select(User).where(User.username == data.username))
     if result.scalar_one_or_none():
@@ -91,6 +92,12 @@ async def register(data: UserRegister, db: AsyncSession = Depends(get_db_session
 
     verified = False
     email = data.email
+    if request.app.state.settings.registration_require_email and not (
+        email and data.verification_code
+    ):
+        raise BusinessError(
+            code=ErrorCode.EMAIL_CODE_INVALID, message="注册必须填写邮箱并完成验证码验证",
+        )
     if email and data.verification_code:
         if not await email_service.verify_code(email, data.verification_code):
             raise BusinessError(code=ErrorCode.EMAIL_CODE_INVALID, http_status=400)
@@ -124,6 +131,14 @@ async def register(data: UserRegister, db: AsyncSession = Depends(get_db_session
     await seed_template_tree(db, user.uuid)
 
     return success_response(data={"user_id": user.uuid, "username": user.username})
+
+
+@router.post("/auth/sse-token", summary="获取一次性 SSE 短期 Token")
+async def sse_token(user_id: str = Depends(get_current_user_id)):
+    from app.utils.auth_utils import create_sse_token
+
+    token = await create_sse_token(user_id)
+    return success_response(data={"token": token, "expires_in": 60})
 
 
 @router.post("/auth/send-code", summary="发送邮箱验证码")

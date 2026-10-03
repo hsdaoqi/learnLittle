@@ -161,10 +161,20 @@ export default function ChatPanel() {
               return copy
             })
           },
+          onReplace: (content) => {
+            setMessages((prev) => prev.map((item) =>
+              item.id === localAssistant.id ? { ...item, content } : item,
+            ))
+          },
           onError: (content) => {
             setError(content)
           },
           onDone: (done) => {
+            setMessages((prev) => prev.map((item) =>
+              item.id === localAssistant.id
+                ? { ...item, ...done.assistant_message, content: done.answer }
+                : item,
+            ))
             sessionId = done.session_id
             setActiveId(done.session_id)
             if (done.title) {

@@ -12,9 +12,10 @@ import logging
 from datetime import datetime, timedelta
 
 from sqlalchemy import and_, func, or_, select, text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import get_settings
+from app.core.after_commit import defer_after_commit
 from app.core.failed_response import BusinessError, ErrorCode
 from app.models.category import NoteCategory
 from app.models.note import Note
@@ -65,6 +66,7 @@ async def index_note(note: Note) -> None:
 
 
 def drop_note_vectors(note_id: str) -> None:
+    """删除笔记向量（物理删除或回收站清理时调用）。"""
     try:
         get_vector_store().delete_note(note_id)
     except Exception as exc:
@@ -76,6 +78,21 @@ async def _try_index(note: Note) -> None:
         await index_note(note)
     except Exception as exc:
         logger.warning("写入笔记向量失败: note_id=%s err=%s", note.id, exc)
+
+
+def defer_note_index(db: AsyncSession, note_id: str) -> None:
+    """等数据库把笔记保存成功（Commit）之后，再去把这篇笔记同步到向量数据库（用于 RAG 知识库检索）；如果笔记被删了，就从向量库里清除它。"""
+    factory = async_sessionmaker(db.bind, expire_on_commit=False)
+
+    async def sync_latest():
+        async with factory() as fresh:
+            note = await fresh.get(Note, note_id)
+            if note is None or note.deleted_at is not None:
+                drop_note_vectors(note_id)
+            else:
+                await _try_index(note)
+
+    defer_after_commit(db, f"note_index:{note_id}", sync_latest)
 
 
 async def ensure_category(db: AsyncSession, user_id: str, category_id: str) -> None:
@@ -113,7 +130,7 @@ async def create_note(db: AsyncSession, user_id: str, data: NoteCreate) -> Note:
     from app.services.review_service import ensure_review_record
 
     await ensure_review_record(db, user_id, note.id)
-    await _try_index(note)
+    defer_note_index(db, note.id)
     return note
 
 
@@ -295,7 +312,8 @@ async def update_note(
     # onupdate 列（updated_at）在 flush 后被标记过期，异步下必须显式刷新，
     # 否则 Pydantic 同步读取属性会触发隐式懒加载而报 MissingGreenlet
     await db.refresh(note)
-    await _try_index(note)
+    if {"title", "content"}.intersection(fields):
+        defer_note_index(db, note.id)
     return note
 
 
@@ -304,7 +322,7 @@ async def soft_delete_note(db: AsyncSession, user_id: str, note_id: str) -> None
     note = await get_active_note(db, user_id, note_id)
     note.deleted_at = datetime.now()
     await db.flush()
-    drop_note_vectors(note.id)
+    defer_note_index(db, note.id)
 
 
 async def list_recycle_bin(db: AsyncSession, user_id: str) -> list[dict]:
@@ -385,7 +403,7 @@ async def cleanup_expired_notes(db: AsyncSession, days: int | None = None) -> in
         .all()
     )
     for note in expired:
-        drop_note_vectors(note.id)
+        defer_note_index(db, note.id)
         await db.delete(note)
     await db.flush()
     return len(expired)
@@ -406,7 +424,7 @@ async def restore_note(db: AsyncSession, user_id: str, note_id: str) -> None:
         raise _not_found()
     note.deleted_at = None
     await db.flush()
-    await _try_index(note)
+    defer_note_index(db, note.id)
 
 
 async def permanent_delete_note(db: AsyncSession, user_id: str, note_id: str) -> None:
@@ -418,6 +436,6 @@ async def permanent_delete_note(db: AsyncSession, user_id: str, note_id: str) ->
     ).scalar_one_or_none()
     if note is None:
         raise _not_found()
-    drop_note_vectors(note.id)
+    defer_note_index(db, note.id)
     await db.delete(note)
     await db.flush()

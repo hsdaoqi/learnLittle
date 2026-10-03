@@ -11,6 +11,7 @@ from app.config import Settings, get_settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.rate_limit import RateLimitMiddleware
 from app.core.scheduler import init_scheduler, shutdown_scheduler
+from app.core.task_runner import drain_background_tasks
 from app.db import redis_client
 from app.db.database import create_database_engine, create_session_factory
 from app.rag import vector_store as vector_store_module
@@ -56,6 +57,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not app_settings.api_reload and app_settings.app_env != "test":
             init_scheduler()
         yield
+        await drain_background_tasks()
         usage_service.set_session_factory(None)
         shutdown_scheduler()
         vector_store_module.close_vector_store()

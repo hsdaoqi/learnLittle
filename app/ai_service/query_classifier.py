@@ -1,6 +1,6 @@
 """查询复杂度分类：L1 规则优先，不确定再走 L2 轻量补全。
 
-simple → ReAct；complex 本阶段仍降级 ReAct（Plan-Execute 下一阶段才接）。
+simple → ReAct；complex 在可用时走 Plan-Execute，否则降级 ReAct。
 失败、关闭开关或未配密钥一律 simple，不打断问答。
 测试可 set_classifier_fn 注入。
 """
@@ -8,6 +8,7 @@ simple → ReAct；complex 本阶段仍降级 ReAct（Plan-Execute 下一阶段�
 from __future__ import annotations
 
 import json
+import asyncio
 import logging
 import re
 from collections.abc import Awaitable, Callable
@@ -266,7 +267,15 @@ async def _llm_classify(
     previous = (usage_service.get_trace_context() or {}).get("stage") or "chat"
     usage_service.set_trace_stage("classify")
     try:
-        raw = await complete_openai_compatible(build_classify_prompt(message), settings)
+        from app.ai_service.models import settings_for_role
+        from app.ai_service.thinking import complete_thinking_for
+
+        role_settings = settings_for_role(settings, "classifier")
+        raw = await complete_openai_compatible(
+            build_classify_prompt(message), role_settings,
+            enable_thinking=complete_thinking_for("classifier", role_settings),
+            timeout=settings.classifier_timeout,
+        )
         return parse_classifier_payload(raw, plan_available=plan_available)
     finally:
         usage_service.set_trace_stage(previous)
@@ -300,7 +309,8 @@ async def classify_query(
             "simple", "fallback", "no_llm_default", 0.5, plan_available=plan_available
         )
     try:
-        return await _llm_classify(text, settings, plan_available=plan_available)
+        async with asyncio.timeout(settings.classifier_timeout):
+            return await _llm_classify(text, settings, plan_available=plan_available)
     except Exception as exc:
         logger.warning("L2 分类失败，降级 simple: %s", exc)
         return _final(

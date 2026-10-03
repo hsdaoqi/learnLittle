@@ -242,6 +242,30 @@ async def get_current_user_id(
     return user_id
 
 
+async def create_sse_token(user_id: str) -> str:
+    token = _create_token(user_id, "sse", timedelta(seconds=60))
+    payload = decode_token(token)
+    await get_redis().setex(f"sse_token:{payload['jti']}", 60, user_id)
+    return token
+
+
+async def get_chat_user_id(authorization: str | None = Header(default=None)) -> str:
+    """Only chat streaming routes opt into single-use SSE tokens."""
+    parts = (authorization or "").split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise BusinessError(code=ErrorCode.TOKEN_INVALID, http_status=401)
+    payload = decode_token(parts[1])
+    if payload.get("type") == "access":
+        payload = await get_current_token_payload(authorization)
+        return payload["sub"]
+    if payload.get("type") != "sse" or not payload.get("jti") or not payload.get("sub"):
+        raise BusinessError(code=ErrorCode.TOKEN_INVALID, http_status=401)
+    owner = await get_redis().getdel(f"sse_token:{payload['jti']}")
+    if owner != payload["sub"]:
+        raise BusinessError(code=ErrorCode.TOKEN_INVALID, http_status=401)
+    return owner
+
+
 def remaining_ttl_seconds(payload: dict) -> int:
     """根据 payload 的 exp 计算剩余有效期（秒）。"""
     return int(payload["exp"] - time.time())

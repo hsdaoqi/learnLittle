@@ -93,32 +93,6 @@ async def _index_chunks(doc: KnowledgeDocument, chunks) -> None:
     )
 
 
-async def save_document(
-    db: AsyncSession,
-    *,
-    user_id: str,
-    original_filename: str,
-    content: bytes,
-    declared_type: str | None,
-    settings: Settings,
-    md5: str | None = None,
-) -> KnowledgeDocument:
-    async for event in iter_save_document(
-        db,
-        user_id=user_id,
-        original_filename=original_filename,
-        content=content,
-        declared_type=declared_type,
-        settings=settings,
-        md5=md5,
-    ):
-        payload = json.loads(event.split("data:", 1)[1].strip())
-        if payload.get("event_type") == "completed":
-            doc_id = payload["document_id"]
-            return await get_document(db, user_id, doc_id)
-    raise RuntimeError("文档处理未完成")
-
-
 async def iter_save_document(
     db: AsyncSession,
     *,

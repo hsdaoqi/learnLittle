@@ -71,7 +71,29 @@ def bind_user_tools(user_id: str, session_factory) -> dict[str, Callable[..., An
     async def search_notes_tool(query: str, top_k: int = 5) -> str:
         top_k = max(1, min(int(top_k or 5), 10))
         cards: list[dict] = []
+        try:
+            from app.rag.vector_store import get_vector_store
+
+            hits = await get_vector_store().search(query, user_id, top_k * 3, collection="notes")
+        except Exception:
+            logger.warning("笔记向量搜索失败，回退关键词", exc_info=True)
+            hits = []
         async with session_factory() as db:
+            seen = set()
+            for item in hits:
+                note_id = item.get("note_id")
+                if not note_id or note_id in seen:
+                    continue
+                try:
+                    note = await note_service.get_active_note(db, user_id, note_id)
+                except BusinessError:
+                    continue
+                seen.add(note_id)
+                cards.append({"title": note.title, "note_id": note.id, "excerpt": note.content or ""})
+                if len(cards) >= top_k:
+                    break
+            if cards:
+                return format_note_search_cards(query, cards)
             data = await note_service.keyword_search(db, user_id, query, top_k)
             hits = data.get("results") or []
             for item in hits:
@@ -88,28 +110,6 @@ def bind_user_tools(user_id: str, session_factory) -> dict[str, Callable[..., An
                         "title": note.title,
                         "note_id": note.id,
                         "excerpt": note.content or "",
-                    }
-                )
-        if not cards:
-            try:
-                from app.rag.vector_store import get_vector_store
-
-                vec = await get_vector_store().search(
-                    query, user_id, top_k, collection="notes"
-                )
-            except Exception as exc:
-                logger.warning("笔记向量搜索失败: %s", exc)
-                vec = []
-            for item in vec:
-                note_id = str(item.get("note_id") or "").strip()
-                title = (item.get("filename") or item.get("title") or "未命名").strip()
-                if not note_id:
-                    continue
-                cards.append(
-                    {
-                        "title": title,
-                        "note_id": note_id,
-                        "excerpt": item.get("content") or "",
                     }
                 )
         return format_note_search_cards(query, cards)
@@ -256,14 +256,14 @@ def register_builtin_tools() -> None:
             "what_time_is_now",
             "获取当前日期和时间，返回格式为 YYYY-MM-DD HH:MM:SS",
             _empty_params(),
-            lambda: None,
+            None,
             "base",
         ),
         ToolSpec(
             "get_user_info_tools",
             "获取当前登录用户的基本信息（用户名、邮箱、用户ID）",
             _empty_params(),
-            lambda: None,
+            None,
             "base",
         ),
         ToolSpec(
@@ -277,7 +277,7 @@ def register_builtin_tools() -> None:
                 },
                 "required": ["query"],
             },
-            lambda: None,
+            None,
             "note_read",
         ),
         ToolSpec(
@@ -288,14 +288,14 @@ def register_builtin_tools() -> None:
                 "properties": {"note_id": {"type": "string"}},
                 "required": ["note_id"],
             },
-            lambda: None,
+            None,
             "note_read",
         ),
         ToolSpec(
             "get_note_stats_tool",
             "获取各分类的笔记数量统计",
             _empty_params(),
-            lambda: None,
+            None,
             "note_read",
         ),
         ToolSpec(
@@ -309,7 +309,7 @@ def register_builtin_tools() -> None:
                 },
                 "required": ["note_title"],
             },
-            lambda: None,
+            None,
             "note_read",
         ),
         ToolSpec(
@@ -325,7 +325,7 @@ def register_builtin_tools() -> None:
                 },
                 "required": ["title", "content"],
             },
-            lambda: None,
+            None,
             "note_write",
         ),
         ToolSpec(
@@ -342,14 +342,14 @@ def register_builtin_tools() -> None:
                 },
                 "required": ["note_id"],
             },
-            lambda: None,
+            None,
             "note_write",
         ),
         ToolSpec(
             "get_today_reviews_tool",
             "获取今日待回顾的笔记列表",
             _empty_params(),
-            lambda: None,
+            None,
             "review",
         ),
         ToolSpec(
@@ -360,11 +360,12 @@ def register_builtin_tools() -> None:
                 "properties": {"review_id": {"type": "integer"}},
                 "required": ["review_id"],
             },
-            lambda: None,
+            None,
             "review",
         ),
     ]
     for spec in specs:
+        spec.parallel_safe = spec.group in {"base", "note_read"} or spec.name == "get_today_reviews_tool"
         registry.register(spec)
 
 

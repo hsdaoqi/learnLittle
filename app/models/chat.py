@@ -1,12 +1,12 @@
 """聊天会话与消息，对应 chat_sessions / chat_messages / chat_summaries。
 
-本阶段不做附件、幂等键。
+主问答使用用户范围内的幂等键；附件留待后续阶段。
 """
 
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -27,6 +27,7 @@ class ChatSession(Base):
     title: Mapped[str] = mapped_column(
         String(200), nullable=False, server_default="新对话"
     )
+    title_manual: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )
@@ -50,6 +51,7 @@ class ChatMessage(Base):
     )
     role: Mapped[str] = mapped_column(String(20), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )

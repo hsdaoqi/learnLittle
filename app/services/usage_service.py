@@ -61,7 +61,7 @@ def clear_trace_context() -> None:
 def set_trace_stage(stage: str) -> None:
     ctx = _trace_ctx.get()
     if ctx is not None:
-        ctx["stage"] = stage
+        _trace_ctx.set({**ctx, "stage": stage})
 
 
 def get_trace_context() -> dict[str, str] | None:
@@ -76,9 +76,9 @@ def estimate_tokens(text: str) -> int:
 
 def parse_usage(data: dict | None, prompt: str, completion: str) -> tuple[int, int, int]:
     usage = (data or {}).get("usage") or {}
-    prompt_tokens = int(usage.get("prompt_tokens") or 0) or estimate_tokens(prompt)
-    completion_tokens = int(usage.get("completion_tokens") or 0) or estimate_tokens(completion)
-    total = int(usage.get("total_tokens") or 0) or (prompt_tokens + completion_tokens)
+    prompt_tokens = int(usage["prompt_tokens"]) if usage.get("prompt_tokens") is not None else estimate_tokens(prompt)
+    completion_tokens = int(usage["completion_tokens"]) if usage.get("completion_tokens") is not None else estimate_tokens(completion)
+    total = int(usage["total_tokens"]) if usage.get("total_tokens") is not None else prompt_tokens + completion_tokens
     return prompt_tokens, completion_tokens, total
 
 
